@@ -34,7 +34,7 @@ def sigmoid(x, thresh, slope):
 
 # Initialize the model, loss function, and optimizer
 def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
-                    X_train, y_train, X_test, y_test, dataloader, dg, grid, optimizer_type=optim.Adam, num_epochs=300, device=None):
+                    X_train, y_train, X_test, y_test, dataloader, dg, grid, optimizer_type=optim.Adam, num_epochs=300, device=None, activation_type=None):
     """
     Create and train the model using the given arguments
     :param input_size: The dimension of the input
@@ -67,7 +67,7 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
     fit_pcov = []
     activations = {}
     x = dg.project_data(grid)
-    model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale)
+    model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=activation_type)
     model.reinitialize(seed=42)
     model = model.to(device)
     model.set_activations_hook(activations)

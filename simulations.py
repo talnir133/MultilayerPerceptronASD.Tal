@@ -13,14 +13,14 @@ plt.rcParams['axes.titleweight'] = 'bold'
 plt.rcParams['legend.fontsize'] = 14
 # %%
 # Parameters
-NUM_EPOCHS = 150
+NUM_EPOCHS = 300
 INPUT_SIZE = 2
-HIDDEN_SIZE = 600
-N_HIDDEN = 4
+HIDDEN_SIZE = 30
+N_HIDDEN = 1
 OUTPUT_SIZE = 1
 NUM_SAMPLES = 500
 B_SCALE = .1
-B_SCALE_HIGH = 5.
+B_SCALE_HIGH = 10.
 W_SCALE = np.sqrt(5. * (2 / HIDDEN_SIZE))
 SCALE = 1
 LOC = 2
@@ -42,11 +42,11 @@ def run_experiment(
     (model_low_bias, resps_low_bias,
      params_low_bias, pcov_low_bias, inp_dist, pretrain_distances) = train_mlp_model(
         input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, X_train,
-        y_train, X_test, y_test, dataloader, dg, grid, opt, num_epochs, device=device)
+        y_train, X_test, y_test, dataloader, dg, grid, opt, num_epochs, device=device, activation_type=None)
     (model_high_bias, resps_high_bias,
      params_high_bias, pcov_high_bias, _, pretrain_distances_wide) = train_mlp_model(
         input_size, hidden_size, n_hidden, output_size, w_scale, b_scale_high,
-        X_train, y_train, X_test, y_test, dataloader, dg, grid, opt, num_epochs, device=device)
+        X_train, y_train, X_test, y_test, dataloader, dg, grid, opt, num_epochs, device=device, activation_type=None)
 
     model_low_bias.eval()
     model_high_bias.eval()
@@ -94,8 +94,8 @@ def run_experiment(
         [layer_distances["activation_func1"][input_dist_idx == i].mean()
          if np.sum(input_dist_idx == i) > 0 else np.nan for i in range(1, len(input_dist_bins))]
     )
-    avg_dist_l4 = np.array(
-        [layer_distances["activation_func4"][input_dist_idx == i].mean()
+    avg_dist_last_hidden_l = np.array(
+        [layer_distances[f"activation_func{N_HIDDEN+1}"][input_dist_idx == i].mean()
          if np.sum(input_dist_idx == i) > 0 else np.nan for i in range(1, len(input_dist_bins))]
     )
     avg_dist_l1_wide = np.array(
@@ -103,8 +103,8 @@ def run_experiment(
          if np.sum(input_dist_idx == i) > 0 else np.nan for i in
          range(1, len(input_dist_bins))]
     )
-    avg_dist_l4_wide = np.array(
-        [layer_distances_wide["activation_func4"][input_dist_idx == i].mean()
+    avg_dist_last_hidden_l_wide = np.array(
+        [layer_distances_wide[f"activation_func{N_HIDDEN+1}"][input_dist_idx == i].mean()
          if np.sum(input_dist_idx == i) > 0 else np.nan for i in
          range(1, len(input_dist_bins))]
     )
@@ -114,25 +114,25 @@ def run_experiment(
          if np.sum(input_dist_idx == i) > 0 else np.nan
          for i in range(1, len(input_dist_bins))]
     )
-    std_dist_l4 = np.array(
-        [layer_distances["activation_func4"][input_dist_idx == i].std()
+    std_dist_last_hidden_l = np.array(
+        [layer_distances[f"activation_func{N_HIDDEN+1}"][input_dist_idx == i].std()
          if np.sum(input_dist_idx == i) > 0 else np.nan for i in range(1, len(input_dist_bins))]
     )
     std_dist_l1_wide = np.array(
         [layer_distances_wide["activation_func1"][input_dist_idx == i].std()
          if np.sum(input_dist_idx == i) > 0 else np.nan for i in range(1, len(input_dist_bins))]
     )
-    std_dist_l4_wide = np.array(
-        [layer_distances_wide["activation_func4"][input_dist_idx == i].std()
+    std_dist_last_hidden_l_wide = np.array(
+        [layer_distances_wide[f"activation_func{N_HIDDEN+1}"][input_dist_idx == i].std()
          if np.sum(input_dist_idx == i) > 0 else np.nan for i in range(1, len(input_dist_bins))]
     )
 
     for distances, std, distances_wide, std_wide, axes, label in zip(
-            [avg_dist_l1, avg_dist_l4],
-            [std_dist_l1, std_dist_l4],
-            [avg_dist_l1_wide, avg_dist_l4_wide],
-            [std_dist_l1_wide, std_dist_l4_wide],
-            [l1_ax, l2_ax], ["L1 tanh", "L4 tanh"]
+            [avg_dist_l1, avg_dist_last_hidden_l],
+            [std_dist_l1, std_dist_last_hidden_l],
+            [avg_dist_l1_wide, avg_dist_last_hidden_l_wide],
+            [std_dist_l1_wide, std_dist_last_hidden_l_wide],
+            [l1_ax, l2_ax], ["L1 tanh", f"L{N_HIDDEN+1} tanh"]
     ):
 
         l1, = axes.plot(input_dist_bins[1:], distances, label=label, color=NT_COLOR)

@@ -8,16 +8,22 @@ class MLP(nn.Module):
     A simple MLP model with ReLU activation and Sigmoid output, that can be reinitialized and set to specific bias scale
     """
 
-    def __init__(self, input_size, hidden_size, n_hidden, output_size, w_scale, b_scale):
+    def __init__(self, input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=None):
         super(MLP, self).__init__()
         self._layers = nn.Sequential()
+
+        def act_func():
+            if activation_type == 'tanh':
+                return nn.Tanh()
+            return nn.Identity()
+
         self._layers.add_module('fc1', nn.Linear(input_size, hidden_size, bias=True))
-        self._layers.add_module('activation_func1', nn.Tanh())
+        self._layers.add_module('activation_func1', act_func())
         self.w_scale = w_scale
         self.b_scale = b_scale
         for i in range(n_hidden):
             self._layers.add_module(f'fc{i + 2}', nn.Linear(hidden_size, hidden_size, bias=True))
-            self._layers.add_module(f'activation_func{i + 2}', nn.Tanh())
+            self._layers.add_module(f'activation_func{i + 2}', act_func())
         self._layers.add_module('fc_last', nn.Linear(hidden_size, output_size, bias=True))
         self._layers.add_module('sigmoid', nn.Sigmoid())
         self._handles = []
