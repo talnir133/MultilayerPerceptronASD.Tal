@@ -1,6 +1,5 @@
 from collections import defaultdict
 import os
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -34,7 +33,8 @@ def sigmoid(x, thresh, slope):
 
 # Initialize the model, loss function, and optimizer
 def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
-                    X_train, y_train, X_test, y_test, dataloader, dg, grid, optimizer_type=optim.Adam, num_epochs=300, device=None, activation_type=None):
+                    X_train, y_train, X_test, y_test, dataloader, dg, grid, optimizer_type=optim.Adam,
+                    num_epochs=300, device=None, activation_type=None):
     """
     Create and train the model using the given arguments
     :param input_size: The dimension of the input
@@ -52,8 +52,6 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
     :param num_epochs: The number of epochs for training
     :return: The trained model, the responses, the fitted parameters, and the covariance matrices of the parameters
     """
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Move data to device
     X_train = X_train.to(device)
@@ -62,30 +60,32 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
     y_test = y_test.to(device)
     grid_tensor = torch.tensor(grid, dtype=torch.float32, device=device)
 
+    # Model setup
     resps = []
-    fit_results = []
-    fit_pcov = []
     activations = {}
-    x = dg.project_data(grid)
     model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=activation_type)
-    model.reinitialize(seed=42)
     model = model.to(device)
+    model.reinitialize(seed=42)
     model.set_activations_hook(activations)
     criterion = nn.BCELoss()
     optimizer = optimizer_type(model.parameters(), lr=0.001)
+
+    # Saving distances data before training
     model.eval()
     input_dist = pairwise_distances(X_train.cpu().detach().numpy())[np.triu_indices(X_train.shape[0])]
     with torch.no_grad():
         resps.append(model(grid_tensor).cpu().detach().numpy())
-        model(X_train)
+        model(X_train)  # filling "activations" with data
         layer_distances = {k: pairwise_distances(v)[np.triu_indices(X_train.shape[0])] for k, v in activations.items()}
     model.remove_activations_hook()
-    model.train()
+
     # Training loop
+    model.train()
     for epoch in tqdm(range(num_epochs), desc="Training"):
         for inputs, labels in dataloader:
             inputs = inputs.to(device)
             labels = labels.to(device)
+
             # Forward pass
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -98,67 +98,15 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
         with torch.no_grad():
             resp = model(grid_tensor).cpu().detach().numpy()
             resps.append(resp)
-            # fit the sigmoid function to the resp
-
-            try:
-                params, pcov = curve_fit(sigmoid, np.squeeze(x), np.squeeze(resp))
-                fit_pcov.append(pcov)
-                fit_results.append(params)
-            except RuntimeError:
-                fit_pcov.append(np.full((2, 2), np.nan))
-                fit_results.append(np.full(2, np.nan))
-
         model.train()
+
+    # Test evaluation
     model.eval()
     with torch.no_grad():
         y_pred = model(X_test)
         test_loss = criterion(y_pred, y_test)
         print(f'Test Loss: {test_loss.item():.4f}')
-    return model, resps, fit_results, fit_pcov, input_dist, layer_distances
-
-
-def animate_decision_through_learning(name, grid, resps, X_train, y_train, generator: GaussianTask):
-    """
-    Animate the 1D decision boundary through learning
-    :param name: The name of the file
-    :param grid: The grid on which the sigmoid was fitted
-    :param resps: The responses of the model
-    :param X_train: The training data
-    :param y_train: The training labels
-    :param generator: The DataGenerator object, used to project the data to 1D
-    """
-    # animate using func_anim
-    fig, ax = plt.subplots()
-    cmap = plt.get_cmap('coolwarm')
-    norm = Normalize(vmin=0, vmax=len(resps))
-    x_train_proj = generator.project_data(X_train)
-    proj_grid = generator.project_data(grid)
-
-    ax.scatter(x_train_proj, ((y_train - 0.5) * 1.05) + 0.5, c=y_train, s=5, alpha=0.5)
-    plt.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax)
-    line, = ax.plot([], [])
-    ax.set_xlim(x_train_proj.min() * 1.1, x_train_proj.max() * 1.1)
-    ax.set_ylim(-0.1, 1.1)
-    ax.set_title("Epoch 0")
-    ax.set_xlabel("Projection")
-    ax.set_ylabel("Output")
-
-    def init():
-        line.set_data([], [])
-        return line,
-
-    def animate(i):
-        line.set_data(proj_grid, resps[i])
-        # set the data color
-        line.set_color(cmap(norm(i)))
-        ax.set_title(f"Epoch {i}")
-        return line,
-
-    anim = FuncAnimation(fig, animate, init_func=init, frames=tqdm(range(len(resps))), interval=500, blit=True)
-    os.makedirs("figures", exist_ok=True)
-    anim.save(f"figures/{name}.mp4", writer="ffmpeg")
-    return anim
-
+    return model, resps, input_dist, layer_distances
 
 def create_gaussian_dataset(input_size, num_samples, loc, scale, n_gaussians=2, seed=0, device=None):
     """
@@ -188,232 +136,3 @@ def create_gaussian_dataset(input_size, num_samples, loc, scale, n_gaussians=2, 
     dataset = TensorDataset(X_train, y_train)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
     return X_train, X_test, y_train, y_test, dg, grid, dataloader
-
-
-# %% Plotting
-def plot_decision_throught_learning(grid, resps, X_train, y_train, generator: GaussianTask, ax=None, cax=False):
-    """
-    Plot the decision boundary through learning
-    :param grid: The grid on which the response was evaluated
-    :param resps: The responses of the model
-    :param X_train: The training data
-    :param y_train: The training labels
-    :param generator: The DataGenerator object
-    """
-    if ax is None:
-        fig, ax = plt.subplots()
-        ax.set_title("Decision boundary through learning")
-    else:
-        fig = ax.get_figure()
-    try:
-        X_train=X_train.detach().cpu().numpy()
-    except TypeError:
-        pass
-    try:
-        y_train=y_train.detach().cpu().numpy()
-    except TypeError:
-        pass
-    cmap = plt.get_cmap('coolwarm')
-    norm = Normalize(vmin=0, vmax=len(resps))
-    for i in range(len(resps)):
-        ax.plot(grid, resps[i], color=cmap(norm(i)))
-    ax.scatter(generator.project_data(X_train), ((y_train - 0.5) * 1.05) + 0.5, c=y_train, s=5, alpha=0.5)
-    if cax is not None and cax != False:
-        plt.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax, orientation='vertical')
-        cax.set_ylabel("Epoch")
-    return fig
-
-
-def plot_change_in_slope(params_low_bias, params_high_bias, pcov_low_bias, pcov_high_bias, num_epochs,
-                         ax: plt.Axes = None):
-    """
-    Plot the change in slope over training
-    :param params_low_bias: The fitted parameters of the Low variance model sigmoid
-    :param params_high_bias: The fitted parameters of the High variance model sigmoid
-    :param pcov_low_bias: The covariance matrix of the Low variance model sigmoid fit
-    :param pcov_high_bias: The covariance matrix of the High variance model sigmoid fit
-    :param num_epochs: The number of epochs
-    """
-    if ax is None:
-        fig = plt.figure(figsize=(5, 5))
-        ax = fig.add_subplot(111)
-        ax.set_title(f"Slope over training, num_samples={num_epochs}")
-    else:
-        fig = ax.get_figure()
-    ax.plot(range(num_epochs), params_low_bias[:, 1], label="Low variance", color=NT_COLOR, markersize=1)
-    ax.fill_between(range(num_epochs), params_low_bias[:, 1] - np.sqrt(pcov_low_bias[:, 1, 1]),
-                    params_low_bias[:, 1] + np.sqrt(pcov_low_bias[:, 1, 1]), alpha=0.5, color=NT_COLOR)
-    ax.plot(range(num_epochs), params_high_bias[:, 1], label="High variance", color=ASD_COLOR, markersize=1)
-    ax.fill_between(range(num_epochs), params_high_bias[:, 1] - np.sqrt(pcov_high_bias[:, 1, 1]),
-                    params_high_bias[:, 1] + np.sqrt(pcov_high_bias[:, 1, 1]), alpha=0.5, color=ASD_COLOR)
-    # ax.set_xlabel("Epoch")
-    ax.set_ylabel("Slope")
-    ax.legend()
-    return fig
-
-
-def plot_km(params_low_bias, params_high_bias, pcov_low_bias, pcov_high_bias, num_epochs, ax=None):
-    """
-    Plot the x value for which the sigmoid crosses 0.5
-    :param params_low_bias: The fitted parameters of the Low variance model sigmoid
-    :param params_high_bias: The fitted parameters of the High variance model sigmoid
-    :param pcov_low_bias: The covariance matrix of the Low variance model sigmoid fit
-    :param pcov_high_bias: The covariance matrix of the High variance model sigmoid fit
-    :param num_epochs: The number of epochs
-    """
-    if ax is None:
-        fig = plt.figure(figsize=(5, 5))
-        ax = fig.add_subplot(111)
-        ax.set_title(f"Threshold over training")
-    else:
-        fig = ax.get_figure()
-    ax.plot(range(num_epochs // 50, num_epochs), params_low_bias[num_epochs // 50:, 0], label="Low variance",
-            color=NT_COLOR,
-            markersize=1)
-    ax.fill_between(range(num_epochs // 50, num_epochs),
-                    params_low_bias[num_epochs // 50:, 0] - np.sqrt(pcov_low_bias[num_epochs // 50:, 0, 0]),
-                    params_low_bias[num_epochs // 50:, 0] + np.sqrt(pcov_low_bias[num_epochs // 50:, 0, 0]), alpha=0.5,
-                    color=NT_COLOR)
-    ax.plot(range(num_epochs // 50, num_epochs), params_high_bias[num_epochs // 50:, 0], label="High variance",
-            color=ASD_COLOR,
-            markersize=1)
-    ax.fill_between(range(num_epochs // 50, num_epochs),
-                    params_high_bias[num_epochs // 50:, 0] - np.sqrt(pcov_high_bias[num_epochs // 50:, 0, 0]),
-                    params_high_bias[num_epochs // 50:, 0] + np.sqrt(pcov_high_bias[num_epochs // 50:, 0, 0]),
-                    alpha=0.5,
-                    color=ASD_COLOR)
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Threshold")
-    ax.legend()
-    return fig
-
-
-def plot_learning_speed(params_low_bias, params_high_bias, num_epochs, ax_slope=None):
-    """
-    Plot the change in slope and threshold over epochs
-    :param params_low_bias: The fitted parameters of the Low variance model sigmoid
-    :param params_high_bias: The fitted parameters of the High variance model sigmoid
-    :param num_epochs: The number of epochs
-    """
-    # fig, (ax_slope, ax_epoch) = plt.subplots(1, 2, figsize=(10, 5))
-    if ax_slope is None:
-        fig, ax_slope = plt.subplots(1, 1, figsize=(7, 5))
-    else:
-        fig = ax_slope.get_figure()
-    ax_slope.plot(range(num_epochs - 1), np.diff(params_low_bias[:, 1]), label="Low variance", color=NT_COLOR,
-                  markersize=1)
-    ax_slope.plot(range(num_epochs - 1), np.diff(params_high_bias[:, 1]), label="High variance", color=ASD_COLOR,
-                  markersize=1)
-    ax_slope.set_ylabel(r"$\Delta$Slope")
-    ax_slope.legend()
-
-    # ax_epoch.plot(range(num_epochs // 50, num_epochs - 1), np.diff(params_low_bias[num_epochs // 50:, 0]),
-    #               label="Low variance",
-    #               color=NT_COLOR, markersize=1)
-    # ax_epoch.plot(range(num_epochs // 50, num_epochs - 1), np.diff(params_high_bias[num_epochs // 50:, 0]),
-    #               label="High variance", color=ASD_COLOR, markersize=1)
-    # ax_epoch.set_title("Threshold change speed")
-    # ax_epoch.legend()
-    return fig
-
-
-def plot_variance_sliding_window(params_low_bias, params_high_bias, ax=None):
-    """
-    Plot the variance of the threshold over a sliding window
-    :param params_low_bias: The fitted parameters of the Low variance model sigmoid
-    :param params_high_bias: The fitted parameters of the High variance model sigmoid
-    """
-    if ax is None:
-        global fig
-        fig, ax = plt.subplots()
-        ax.set_title(f"Threshold variance over training")
-    else:
-        fig = ax.get_figure()
-
-    window_size = 10
-    low_bias_var = np.lib.stride_tricks.sliding_window_view(params_low_bias[:, 0], window_shape=window_size).var(1)
-    high_bias_var = np.lib.stride_tricks.sliding_window_view(params_high_bias[:, 0], window_shape=window_size).var(1)
-    ax.plot(range(1, low_bias_var.size + 1), low_bias_var, label="Low variance", color=NT_COLOR)
-    ax.plot(range(1, high_bias_var.size + 1), high_bias_var, label="High variance", color=ASD_COLOR)
-
-    ax.set_xlabel(f"Window, #epochs per window={window_size}")
-    ax.set_ylabel("Variance")
-    ax.legend()
-
-
-def plot_decision_boundary(X_train, y_train, model, ax, title=None):
-    """
-    Plot the decision boundary with training data
-    :param X_train: The training data
-    :param y_train: The training labels
-    :param model: The model
-    :param ax: The axis
-    """
-    train_x_c0 = X_train[y_train.flatten() == 0, :]
-    train_x_c1 = X_train[y_train.flatten() == 1, :]
-
-    # create a 2d points grid for the entire space
-    n_point_in_grid = 201
-    linspace = np.linspace(X_train.min() - 1, X_train.max() + 1, n_point_in_grid)
-    grid_x, grid_y = np.meshgrid(linspace, linspace)
-
-    grid_input = np.vstack([grid_x.flatten(), grid_y.flatten()]).T
-    classifications = model(torch.tensor(grid_input, dtype=torch.float32)).detach().numpy().reshape(
-        n_point_in_grid, n_point_in_grid)
-
-    c = ax.pcolormesh(linspace, linspace, classifications, vmin=0, vmax=1, alpha=0.5, cmap='coolwarm')
-    ax.scatter(*train_x_c1.T)
-    ax.scatter(*train_x_c0.T)
-    # plot the countour of the decision boundary by coloring the sep_grid points according to the model response
-    if title:
-        ax.set_title(title)
-    return c
-
-
-def pair_distances(x):
-    return np.sqrt(np.mean((x[::2] - x[1::2]) ** 2, axis=-1))
-
-
-def participation_ratio(eigvals):
-    s1, s2 = eigvals.sum(), (eigvals**2).sum()
-    return (s1**2)/(s2+1e-12)
-
-def effective_rank(S):
-    p = S/S.sum(); H = -(p*np.log(p+1e-12)).sum()
-    return np.exp(H)
-
-def pcs_to_explain(S, thr=(.8,.9,.95)):
-    csum, total = np.cumsum(S), S.sum()
-    return {f"pcs_{int(t*100)}": np.searchsorted(csum, t*total)+1 for t in thr}
-
-def covariance_spectrum(H):
-    X = H - H.mean(0, keepdims=True)
-    _, S, _ = np.linalg.svd(X, full_matrices=False)
-    eig = S**2 / (len(X)-1)
-    return eig, S
-
-def lag1_autocorr(tr):
-    X = tr - tr.mean(0)
-    num = (X[:-1]*X[1:]).mean(0)
-    den = X[:-1].std(0)*X[1:].std(0)+1e-12
-    return float(np.nanmean(num/den))
-
-def trajectory_speed(tr):
-    return torch.norm(tr[1:]-tr[:-1], dim=-1).mean().item()
-
-
-def estimate_empirical_transitions(train_dataset, M):
-    """Estimate empirical HMM transition matrix from sampled latent z sequences."""
-    counts = np.zeros((M, M))
-    for i in range(len(train_dataset)):
-        _, _, z_seq, _ = train_dataset[i]
-        z_seq = z_seq.numpy()
-        z_seq = z_seq[z_seq >= 0]
-        for t in range(len(z_seq) - 1):
-            counts[z_seq[t], z_seq[t + 1]] += 1
-    row_sums = counts.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1
-    return counts / row_sums
-
-import seaborn as sns
-
