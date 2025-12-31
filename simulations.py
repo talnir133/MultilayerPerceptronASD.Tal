@@ -13,7 +13,7 @@ plt.rcParams['axes.titleweight'] = 'bold'
 plt.rcParams['legend.fontsize'] = 14
 # %%
 # Parameters
-NUM_EPOCHS = 300
+NUM_EPOCHS = 150
 INPUT_SIZE = 2
 HIDDEN_SIZE = 30
 N_HIDDEN = 1
@@ -25,11 +25,12 @@ W_SCALE = np.sqrt(5. * (2 / HIDDEN_SIZE))
 SCALE = 1
 LOC = 2
 OPTIM_TYPE = "SGD"
+ACTIVATION_TYPE = 'Sigmoid'
 
 
 def run_experiment(
     input_size, num_samples, loc, scale, n_hidden, hidden_size, output_size,
-    w_scale, b_scale, b_scale_high, num_epochs, opt_type, seed, dataset_id, run_id, device=None
+    w_scale, b_scale, b_scale_high, num_epochs, opt_type, activation_type, seed, dataset_id, run_id, device=None,
 ):
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -204,7 +205,7 @@ if __name__ == '__main__':
             print("Run", run_id)
             run_experiment(
                 INPUT_SIZE, NUM_SAMPLES, LOC, SCALE, N_HIDDEN, HIDDEN_SIZE, OUTPUT_SIZE,
-                W_SCALE, B_SCALE, B_SCALE_HIGH, NUM_EPOCHS, OPTIM_TYPE, seed=dataset_id*10+run_id,
+                W_SCALE, B_SCALE, B_SCALE_HIGH, NUM_EPOCHS, OPTIM_TYPE, ACTIVATION_TYPE, seed=dataset_id*10+run_id,
                 dataset_id=dataset_id, run_id=run_id, device=device
             )
 # %%

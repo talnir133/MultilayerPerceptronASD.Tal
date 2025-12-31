@@ -13,9 +13,13 @@ class MLP(nn.Module):
         self._layers = nn.Sequential()
 
         def act_func():
-            if activation_type == 'tanh':
-                return nn.Tanh()
-            return nn.Identity()
+            if activation_type == 'Identity':
+                return nn.Identity()
+            if activation_type == 'RelU':
+                return nn.ReLU()
+            if activation_type == 'Sigmoid':
+                return nn.Sigmoid()
+            return nn.Tanh()
 
         self._layers.add_module('fc1', nn.Linear(input_size, hidden_size, bias=True))
         self._layers.add_module('activation_func1', act_func())
