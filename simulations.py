@@ -25,7 +25,7 @@ W_SCALE = np.sqrt(5. * (2 / HIDDEN_SIZE))
 SCALE = 1
 LOC = 2
 OPTIM_TYPE = "SGD"
-ACTIVATION_TYPE = 'Sigmoid'
+ACTIVATION_TYPE = 'Identity'
 
 
 def run_experiment(
@@ -43,11 +43,11 @@ def run_experiment(
     (model_low_bias, resps_low_bias,
      params_low_bias, pcov_low_bias, inp_dist, pretrain_distances) = train_mlp_model(
         input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, X_train,
-        y_train, X_test, y_test, dataloader, dg, grid, opt, num_epochs, device=device, activation_type=None)
+        y_train, X_test, y_test, dataloader, dg, grid, opt, num_epochs, device=device, activation_type=activation_type)
     (model_high_bias, resps_high_bias,
      params_high_bias, pcov_high_bias, _, pretrain_distances_wide) = train_mlp_model(
         input_size, hidden_size, n_hidden, output_size, w_scale, b_scale_high,
-        X_train, y_train, X_test, y_test, dataloader, dg, grid, opt, num_epochs, device=device, activation_type=None)
+        X_train, y_train, X_test, y_test, dataloader, dg, grid, opt, num_epochs, device=device, activation_type=activation_type)
 
     model_low_bias.eval()
     model_high_bias.eval()
