@@ -1,40 +1,73 @@
 import numpy as np
+import itertools
 import torch
 
-class GaussianTask:
+
+def classification_rule(shape_name, n_types, deciding_feature):
     """
-    A simple data generator for creating data from multidimensional Gaussians with different means and same scale
+    Determines the label based on a specific feature's value.
+    :param shape_name: Tuple of indices representing the category of each feature.
+    :param n_types: List of integers representing the number of categories per feature.
+    :param deciding_feature: Index of the feature used for classification.
+    :return: 1 if the feature value is below threshold (half of n_types), else 0.
+    """
+    types = list(range(n_types[deciding_feature]))
+    threshold = len(types) // 2
+    if shape_name[deciding_feature] < threshold:
+        return 1
+    else:
+        return 0
+
+
+class SummerfieldTask:
+    """
+    Generates synthetic categorical data using One-Hot encoded features.
+    :param features_types: List of integers; each represents the number of types for a feature.
+    :param odd_dim: Dimension of an additional 'odd' feature (used for context/noise).
+    :param sd: Standard deviation for potential noise (default 0).
     """
 
-    def __init__(self, emb_dim, n_gaussians, locs, scales, labels=None):
-        self.emb_dim = emb_dim
-        self.n_gaussians = n_gaussians
-        self.locs = np.array(locs)
-        self.scales = scales
-        self.labels = labels if labels is not None else list(range(n_gaussians))
+    def __init__(self, features_types, odd_dim, sd=0):
+        self.n_features = len(features_types) + 1 if odd_dim != 0 else len(features_types)
+        self.n_types = features_types + [odd_dim]
+        self.sd = sd
+        self.odd_dim = odd_dim
+        self.shapes = None
+        self.names = None
 
-    def create(self, n_samples):
-        x = []
-        y = []
-        for i in range(self.n_gaussians):
-            x.append(torch.randn(n_samples, self.emb_dim) * self.scales[i] + self.locs[i])
-            y.append(torch.ones(n_samples) * self.labels[i])
+    def create_shapes(self):
+        """
+        Creates all possible feature combinations and their corresponding names.
+        """
+        features = []
+        names = []
+        for i in range(self.n_features):
+            samples = np.eye(self.n_types[i])
+            feature_labels = list(range(self.n_types[i]))
+            features.append(samples)
+            names.append(feature_labels)
+        self.shapes = torch.tensor(np.array([np.concatenate(combo) for combo in itertools.product(*features)])).float()
+        self.names = torch.tensor(list(itertools.product(*names))).float()
 
-        return torch.vstack(x), torch.hstack(y)[:, None]
+    def get_data(self, deciding_feature=0, odd=False):
+        """
+        Generates the final dataset and labels.
+        :param deciding_feature: The feature index used to determine the label.
+        :param odd: Boolean; if False, the 'odd_dim' feature is zeroed out in X.
+        :return: X (features tensor), y (labels tensor).
+        """
+        self.create_shapes()
+        labels = [classification_rule(name, self.n_types, deciding_feature) for name in self.names]
+        y = torch.tensor(labels)[:, None].float()
 
-    def project_data(self, x):
-        if self.emb_dim == 1:
-            return x
-        proj_vec = np.repeat(self.locs[1], self.emb_dim).astype(float) - np.repeat(self.locs[0], self.emb_dim).astype(
-            float)
-        proj_vec /= np.linalg.norm(proj_vec).astype(float)  # get normalized vector for projection
-        return x @ proj_vec[:, None]
+        x = self.shapes.clone()
+        if not odd and self.odd_dim != 0:
+            x[:, -self.odd_dim:] = 0
 
-    def get_centers_grid(self, n_samples):
-        alphas = np.linspace(0, 1, n_samples)
-        loc0 = self.locs[0][None] - 3 * self.scales[0]
-        loc1 = self.locs[1][None] + 3 * self.scales[1]
-        dist = loc1 - loc0
-        grid_x = loc0 + alphas[:, None] * dist
-        grid_x = np.tile(grid_x, (1, self.n_gaussians))
-        return grid_x
+        return x, y
+
+
+# st = SummerfieldTask([2, 2], 1)
+# x, y = st.get_data(0, odd=False)
+# print(x)
+# print(y)

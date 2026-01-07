@@ -4,13 +4,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
-from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
 from sklearn.metrics.pairwise import pairwise_distances
-from datasets import GaussianTask
+from datasets import SummerfieldTask
 from models import MLP
 ASD_COLOR = "#FF0000"
 NT_COLOR = "#00A08A"
@@ -27,36 +27,32 @@ def sigmoid(x, thresh, slope):
 
 # Initialize the model, loss function, and optimizer
 def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
-                    X_train, y_train, X_test, y_test, dataloader, dg, grid, optimizer_type=optim.Adam,
-                    num_epochs=300, device=None, activation_type=None):
+                    X, y, dataloader, optimizer_type=optim.Adam,
+                    num_epochs=150, device=None, activation_type=None):
     """
-    Create and train the model using the given arguments
-    :param input_size: The dimension of the input
-    :param hidden_size: The size of the hidden layers
-    :param n_hidden: The number of hidden layers
-    :param output_size: The size of the output layer
-    :param w_scale: The scale of the weights
-    :param b_scale: The scale of the biases
-    :param X_test: The test data
-    :param y_test: The test labels
-    :param dataloader: The DataLoader for the training data
-    :param dg: The DataGenerator object
-    :param grid: The grid for the centers on which the sigmoid will be fitted
-    :param optimizer_type: The optimizer type
-    :param num_epochs: The number of epochs for training
-    :return: The trained model, the responses, the fitted parameters, and the covariance matrices of the parameters
-    """
+    Initializes and trains an MLP model, capturing activation distances and loss history.
 
+    :param input_size: Integer, number of input features (total dimension of concatenated one-hots).
+    :param hidden_size: Integer, number of neurons in each hidden layer.
+    :param n_hidden: Integer, number of hidden layers (excluding input and output).
+    :param output_size: Integer, dimension of the output layer (usually 1 for binary classification).
+    :param w_scale: Float, standard deviation used for normal initialization of weights.
+    :param b_scale: Float, standard deviation used for normal initialization of biases.
+    :param X: Tensor, the full feature set used for evaluation and distance calculation.
+    :param y: Tensor, the full label set used for final loss evaluation.
+    :param dataloader: PyTorch DataLoader providing shuffled batches for the training loop.
+    :param optimizer_type: The PyTorch optimizer class to use (e.g., optim.Adam or optim.SGD).
+    :param num_epochs: Integer, the number of complete passes over the dataset.
+    :param device: torch.device, specifies whether to train on 'cpu' or 'cuda'.
+    :param activation_type: String, the type of activation function for hidden layers ('RelU', 'Sigmoid', 'Tanh', etc.).
+    """
     # Move data to device
-    X_train = X_train.to(device)
-    y_train = y_train.to(device)
-    X_test = X_test.to(device)
-    y_test = y_test.to(device)
-    grid_tensor = torch.tensor(grid, dtype=torch.float32, device=device)
+    X = X.to(device)
+    y = y.to(device)
 
     # Model setup
-    resps = []
     activations = {}
+    loss_history = []
     model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=activation_type)
     model = model.to(device)
     model.reinitialize(seed=42)
@@ -66,11 +62,10 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
 
     # Saving distances data before training
     model.eval()
-    input_dist = pairwise_distances(X_train.cpu().detach().numpy())[np.triu_indices(X_train.shape[0])]
+    input_dist = pairwise_distances(X.cpu().detach().numpy())[np.triu_indices(X.shape[0])]
     with torch.no_grad():
-        resps.append(model(grid_tensor).cpu().detach().numpy())
-        model(X_train)  # filling "activations" with data
-        layer_distances = {k: pairwise_distances(v)[np.triu_indices(X_train.shape[0])] for k, v in activations.items()}
+        model(X)  # filling "activations" with data
+        layer_distances = {k: pairwise_distances(v)[np.triu_indices(X.shape[0])] for k, v in activations.items()}
     model.remove_activations_hook()
 
     # Training loop
@@ -88,45 +83,63 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        model.eval()
-        with torch.no_grad():
-            resp = model(grid_tensor).cpu().detach().numpy()
-            resps.append(resp)
-        model.train()
 
-    # Test evaluation
+            # Data saving:
+            loss_history.append(loss.item() / len(dataloader))
+
+    # Final evaluation
     model.eval()
     with torch.no_grad():
-        y_pred = model(X_test)
-        test_loss = criterion(y_pred, y_test)
-        print(f'Test Loss: {test_loss.item():.4f}')
-    return model, resps, input_dist, layer_distances
+        y_pred = model(X)
+        test_loss = criterion(y_pred, y)
+        print(f'Final Loss: {test_loss.item():.4f}')
 
-def create_gaussian_dataset(input_size, num_samples, loc, scale, n_gaussians=2, seed=0, device=None):
+    analysis_data = [input_dist, layer_distances, loss_history]
+
+    return model, analysis_data
+
+
+def create_dataset(features_types, odd_dim
+                   , deciding_feature=0, odd=False, seed=0, device=None):
     """
-    Create a dataset using the DataGenerator
-    :param input_size: The dimension of the input
-    :param num_samples: The number of samples
-    :param loc: The means of the Gaussians
-    :param scale: The scale of the Gaussians
-    :param n_gaussians: The number of Gaussians
-    :param seed: The seed for the random number generator
-    :return: X_train, X_test, y_train, y_test, The DataGenerator object, grid, training data DataLoader
+    A wrapper to initialize the task, generate data, and prepare a DataLoader.
+    :param features_types: Dimensions for each One-Hot encoded feature.
+    :param odd_dim: Dimension of the odd feature.
+    :param deciding_feature: Index used for the labeling rule.
+    :param odd: Whether to include the 'odd' feature data in X.
+    :param seed: Random seed for reproducibility.
+    :param device: torch.device (CPU/CUDA).
+    :return: X, y, and a DataLoader configured with batch_size=len(X).
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     np.random.seed(seed)
     torch.manual_seed(seed)
-    dg = GaussianTask(input_size, n_gaussians, [-loc, loc], [scale, scale])
+    st = SummerfieldTask(features_types, odd_dim)
 
-    X, y = dg.create(num_samples)
+    X, y = st.get_data(deciding_feature, odd)
     X = X.to(device)
     y = y.to(device)
 
-    grid = dg.get_centers_grid(150)
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
     # Create DataLoader
-    dataset = TensorDataset(X_train, y_train)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
-    return X_train, X_test, y_train, y_test, dg, grid, dataloader
+    dataset = TensorDataset(X, y)
+    dataloader = DataLoader(dataset, batch_size=len(X), shuffle=True)
+    return X, y, dataloader
+
+
+class Figures():  # continue working on it
+    def __init__(self):
+        os.makedirs("figures", exist_ok=True)
+        plt.figure(figsize=(10, 6))
+
+    def loss_graph(self, loss_low, loss_high):
+        plt.plot(loss_low, label=f'Low Bias Scale', color='blue')
+        plt.plot(loss_high, label=f'High Bias Scale)', color='red')
+
+        plt.title('Training Loss Comparison')
+        plt.xlabel('Epoch')
+        plt.ylabel('BCE Loss')
+        plt.yscale('log')
+        plt.legend()
+        plt.grid(True, which="both", ls="-", alpha=0.5)
+        plt.show()
