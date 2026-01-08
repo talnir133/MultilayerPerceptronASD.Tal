@@ -12,17 +12,6 @@ matplotlib.use('TkAgg')
 from sklearn.metrics.pairwise import pairwise_distances
 from datasets import SummerfieldTask
 from models import MLP
-ASD_COLOR = "#FF0000"
-NT_COLOR = "#00A08A"
-
-def sigmoid(x, thresh, slope):
-    """
-    Sigmoid function
-    :param x: Input
-    :param thresh: Threshold
-    :param slope: Slope
-    """
-    return 1 / (1 + np.exp(-slope * (x - thresh)))
 
 
 # Initialize the model, loss function, and optimizer
