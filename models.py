@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+
 # Define the MLP model
 class MLP(nn.Module):
     """
@@ -20,14 +21,14 @@ class MLP(nn.Module):
                 return nn.Sigmoid()
             return nn.Tanh()
 
-        self._layers.add_module('fc1', nn.Linear(input_size, hidden_size, bias=True))
+        self._layers.add_module('fc1', nn.Linear(input_size, hidden_size, bias=bool(b_scale)))
         self._layers.add_module('activation_func1', act_func())
         self.w_scale = w_scale
         self.b_scale = b_scale
         for i in range(n_hidden):
-            self._layers.add_module(f'fc{i + 2}', nn.Linear(hidden_size, hidden_size, bias=True))
+            self._layers.add_module(f'fc{i + 2}', nn.Linear(hidden_size, hidden_size, bias=bool(b_scale)))
             self._layers.add_module(f'activation_func{i + 2}', act_func())
-        self._layers.add_module('fc_last', nn.Linear(hidden_size, output_size, bias=True))
+        self._layers.add_module('fc_last', nn.Linear(hidden_size, output_size, bias=bool(b_scale)))
         self._layers.add_module('sigmoid', nn.Sigmoid())
         self._handles = []
         # self.reinitialize()
@@ -57,7 +58,11 @@ class MLP(nn.Module):
     def reinitialize(self, seed=None):
         if seed is not None:
             torch.manual_seed(seed)
-        for m in self.modules():
+        for name, m in self.named_modules():
             if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, self.w_scale)
-                nn.init.normal_(m.bias, 0, self.b_scale)
+                if bool(self.b_scale):
+                    nn.init.normal_(m.bias, 0, self.b_scale)
+                if 'fc1' in name:
+                    nn.init.xavier_normal_(m.weight, gain=self.w_scale)
+                else:
+                    nn.init.xavier_normal_(m.weight)

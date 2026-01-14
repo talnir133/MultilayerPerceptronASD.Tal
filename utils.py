@@ -1,4 +1,3 @@
-from collections import defaultdict
 import os
 import torch
 import torch.nn as nn
@@ -14,7 +13,6 @@ from datasets import SummerfieldTask
 from models import MLP
 
 
-# Initialize the model, loss function, and optimizer
 def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
                     X, y, dataloader, optimizer_type=optim.Adam,
                     num_epochs=150, device=None, activation_type=None):
@@ -25,7 +23,7 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
     :param hidden_size: Integer, number of neurons in each hidden layer.
     :param n_hidden: Integer, number of hidden layers (excluding input and output).
     :param output_size: Integer, dimension of the output layer (usually 1 for binary classification).
-    :param w_scale: Float, standard deviation used for normal initialization of weights.
+    :param w_scale: List of 2 floats, standard deviation used for normal initialization of weights (low and high).
     :param b_scale: Float, standard deviation used for normal initialization of biases.
     :param X: Tensor, the full feature set used for evaluation and distance calculation.
     :param y: Tensor, the full label set used for final loss evaluation.
@@ -39,22 +37,24 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
     X = X.to(device)
     y = y.to(device)
 
+    # Measurement:
+    data = {"input distances": None, "initial activations distances": None, "losses": [], "accuracies": [], "X": X, "y": y, "final predicted y": None}
+
     # Model setup
     activations = {}
-    loss_history = []
     model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=activation_type)
     model = model.to(device)
     model.reinitialize(seed=42)
     model.set_activations_hook(activations)
     criterion = nn.BCELoss()
-    optimizer = optimizer_type(model.parameters(), lr=0.001)
+    optimizer = optimizer_type(model.parameters(), lr=0.004)
 
     # Saving distances data before training
     model.eval()
-    input_dist = pairwise_distances(X.cpu().detach().numpy())[np.triu_indices(X.shape[0])]
+    data["input distances"] = pairwise_distances(X.cpu().detach().numpy())[np.triu_indices(X.shape[0])]
     with torch.no_grad():
         model(X)  # filling "activations" with data
-        layer_distances = {k: pairwise_distances(v)[np.triu_indices(X.shape[0])] for k, v in activations.items()}
+        data["initial activations distances"] = {k: pairwise_distances(v)[np.triu_indices(X.shape[0])] for k, v in activations.items()}
     model.remove_activations_hook()
 
     # Training loop
@@ -74,18 +74,18 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
             optimizer.step()
 
             # Data saving:
-            loss_history.append(loss.item() / len(dataloader))
+            data["losses"].append(loss.item() / len(dataloader))
+            data["accuracies"].append(1-torch.abs(outputs - labels).mean().item())
 
     # Final evaluation
     model.eval()
     with torch.no_grad():
         y_pred = model(X)
         test_loss = criterion(y_pred, y)
-        print(f'Final Loss: {test_loss.item():.4f}')
+        print(f'Final Loss: {test_loss.item() / len(dataloader):.4f}')
+        data["final predicted y"] = y_pred
 
-    analysis_data = [input_dist, layer_distances, loss_history]
-
-    return model, analysis_data
+    return model, data
 
 
 def create_dataset(features_types, odd_dim
@@ -112,18 +112,22 @@ def create_dataset(features_types, odd_dim
 
     # Create DataLoader
     dataset = TensorDataset(X, y)
-    dataloader = DataLoader(dataset, batch_size=len(X), shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
     return X, y, dataloader
 
 
 class Figures():  # continue working on it
-    def __init__(self):
+    def __init__(self, config, data_low, data_high):
         os.makedirs("figures", exist_ok=True)
         plt.figure(figsize=(10, 6))
+        self.data_low = data_low
+        self.data_high = data_high
+        self.config = config
 
-    def loss_graph(self, loss_low, loss_high):
-        plt.plot(loss_low, label=f'Low Bias Scale', color='blue')
-        plt.plot(loss_high, label=f'High Bias Scale)', color='red')
+    def loss_graph(self):
+
+        plt.plot(self.data_low["losses"], label=f'Low Variance Scale', color='blue')
+        plt.plot(self.data_high["losses"], label=f'High Variance Scale)', color='red')
 
         plt.title('Training Loss Comparison')
         plt.xlabel('Epoch')
@@ -132,3 +136,16 @@ class Figures():  # continue working on it
         plt.legend()
         plt.grid(True, which="both", ls="-", alpha=0.5)
         plt.show()
+
+    def accuracy_graph(self):
+        plt.plot(self.data_low["accuracies"], label=f'Low Variance Scale', color='blue')
+        plt.plot(self.data_high["accuracies"], label=f'High Variance Scale)', color='red')
+
+        plt.title('Training Accuracies Comparison')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.legend()
+        plt.grid(True, which="both", ls="-", alpha=0.5)
+        plt.show()
+
+
