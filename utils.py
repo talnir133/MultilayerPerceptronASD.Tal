@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import matplotlib
+
 matplotlib.use('TkAgg')
 from sklearn.metrics.pairwise import pairwise_distances
 from datasets import SummerfieldTask
@@ -86,14 +87,15 @@ def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, 
     with torch.no_grad():
         y_pred = model(X)
         test_loss = criterion(y_pred, y)
-        print(f'Final Loss: {test_loss.item() / len(dataloader):.4f}')
+        print(f'Final Loss: {test_loss.item() / len(dataloader):.4f}\n')
         data["final predicted y"] = y_pred
 
     return model, data
 
 
 def create_dataset(features_types, odd_dim
-                   , deciding_feature=0, odd=False, seed=0, device=None, unique_points_only=False, batch_size = 1, **kwargs):
+                   , deciding_feature=0, odd=False, seed=0, device=None, unique_points_only=False, batch_size=1,
+                   **kwargs):
     """
     A wrapper to initialize the task, generate data, and prepare a DataLoader.
     :param features_types: Dimensions for each One-Hot encoded feature.
@@ -121,17 +123,27 @@ def create_dataset(features_types, odd_dim
 
 
 class Figures():  # continue working on it
-    def __init__(self, exp_initial = None, exp_odd = None, exp_flex = None):
+    def __init__(self, exp_initial, exp_odd=None, exp_flex=None):
         os.makedirs("figures", exist_ok=True)
-        self.data = {"initial":exp_initial,
-                     "odd":exp_odd,
-                     "flex":exp_flex}
+        self.data = {"initial": exp_initial,
+                     "odd": exp_odd,
+                     "flex": exp_flex}
+        if exp_initial:
+            self.variable = "Weights" if exp_initial["config"]["b_scale_low"] == 0 else "Biases"
 
-
-    def graph_temp1(self, y, y_axis_name, exps, log = False):
+    def graph_temp1(self, y, y_axis_name, exps, log=False):
+        act_type = self.data["initial"]["config"]["activation_type"]
+        n_epochs = self.data["initial"]["config"]["num_epochs"]
         low = []
         high = []
         lines = []
+        exp_name = 'initial condition'
+        if len(exps)==2:
+            if exps[1] == 'flex':
+                exp_name = 'flexibility'
+            if exps[1] == 'odd':
+                exp_name = 'generalization'
+
         for exp_name in exps:
             exp = self.data[exp_name]
             low += exp["data_low"][y]
@@ -139,19 +151,24 @@ class Figures():  # continue working on it
             lines.append(len(low))
         lines = lines[:-1]
         plt.figure(figsize=(12, 6))
-        plt.plot(low, label=f'Low Variance Scale (RichMLP)', color='blue')
-        plt.plot(high, label=f'High Variance Scale (LazyMLP)', color='red')
+        plt.plot(low, label=f'Low Variance (RichMLP)', color='blue')
+        plt.plot(high, label=f'High Variance (LazyMLP)', color='red')
         for line in lines:
             plt.axvline(x=line, color='gray', linestyle='--', linewidth=1)
-            plt.text(line - 3, plt.ylim()[1] * 0.15, 'Shift-point', color='gray', fontsize=9, rotation=90, verticalalignment='bottom', horizontalalignment='right')
-
-        plt.title(f'{y.capitalize()} Comparison in {exps} Experiments')
-        plt.xlabel('Epoch')
+            plt.text(line - 5, sum(plt.ylim()) / 2, 'Shift-point', color='gray', fontsize=9, rotation=90,
+                     verticalalignment='center', horizontalalignment='right')
+        plt.text(1.02, 0.5, f'activation function: {act_type}',
+                 rotation=270, fontsize=10, verticalalignment='center', transform=plt.gca().transAxes)
+        plt.title(
+            f"Summerfield's Replication, {y.capitalize()} Comparison in {exp_name.capitalize()} Experiment, Different {self.variable} Variances ",
+            fontweight='bold')
+        plt.xlabel(f'Batches ({n_epochs} epochs per stage in total)')
         plt.ylabel(y_axis_name)
         if log:
             plt.yscale('log')
         plt.legend()
         plt.grid(True, which="both", ls="-", alpha=0.5)
+        plt.savefig(f"figures/{y}_comparison, {exp_name}, {self.variable}, {act_type}.png", bbox_inches='tight', dpi=300)
         plt.show()
 
     def loss_graph(self, exps):
@@ -166,7 +183,6 @@ def added_config(config, seed, device, odd, deciding_feature, unique_points_only
     config["input_size"] = sum(config["features_types"]) + config["odd_dim"]
     if device is None:
         config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Using device:", device)
     config["optimizer_type"] = optim.Adam if config["optimizer_type"] == "Adam" else optim.SGD
     config["odd"] = odd
     config["deciding_feature"] = deciding_feature

@@ -2,7 +2,7 @@ from utils import *
 
 # Parameters
 PARAMS = {
-    "num_epochs": 50,
+    "num_epochs": 1000,
     "features_types": [4, 4],
     "odd_dim": 8,
     "hidden_size": 30,
@@ -14,7 +14,7 @@ PARAMS = {
     "w_scale_high": 50,
     "optimizer_type": "Adam",
     "activation_type": "Identity",
-    "batch_size": 16,
+    "batch_size": 128,
 }
 
 
