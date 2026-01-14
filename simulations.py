@@ -4,64 +4,44 @@ from utils import *
 PARAMS = {
     "num_epochs": 50,
     "features_types": [4, 4],
-    "odd_dim": 0,
+    "odd_dim": 8,
     "hidden_size": 30,
     "n_hidden": 1,
     "output_size": 1,
     "b_scale_low": 0,
     "b_scale_high": 0,
-    "w_scale": [0.1, 50],
-    "optim_type": "Adam",
-    "activation_type": "Identity"
+    "w_scale_low": 0.1,
+    "w_scale_high": 50,
+    "optimizer_type": "Adam",
+    "activation_type": "Identity",
+    "batch_size": 16,
 }
 
 
-def run_experiment1(config, seed, device=None):
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Using device:", device)
-
-    input_size = sum(config["features_types"]) + config["odd_dim"]
-    X, y, dataloader = create_dataset(config["features_types"], odd_dim=config["odd_dim"], seed=seed, device=device)
-    opt = optim.Adam if config["optim_type"] == "Adam" else optim.SGD
+def run_experiment(config, models=(0, 0), odd=False, deciding_feature=0, unique_points_only = False, seed=0, device=None):
+    config = added_config(config, seed, device, odd, deciding_feature, unique_points_only)
+    X, y, dataloader = create_dataset(**config)
 
     # Training
-    (model_low_bias, data_low) = train_mlp_model(input_size, config["hidden_size"], config["n_hidden"],
-                                                 config["output_size"], config["w_scale"][0], config["b_scale_low"],
-                                                 X, y, dataloader,
-                                                 optimizer_type=opt,
-                                                 num_epochs=config["num_epochs"],
-                                                 device=device,
-                                                 activation_type=config["activation_type"])
-    (model_high_bias, data_high) = train_mlp_model(input_size, config["hidden_size"], config["n_hidden"],
-                                                   config["output_size"], config["w_scale"][1],
-                                                   config["b_scale_high"],
-                                                   X, y, dataloader,
-                                                   optimizer_type=opt,
-                                                   num_epochs=config["num_epochs"],
-                                                   device=device,
-                                                   activation_type=config["activation_type"])
+    model_low, data_low = train_mlp_model(models[0], X, y, dataloader, w_scale=config["w_scale_low"],
+                                          b_scale=config["b_scale_low"],
+                                          **config)
+    model_high, data_high = train_mlp_model(models[1], X, y, dataloader, w_scale=config["w_scale_high"],
+                                            b_scale=config["b_scale_high"],
+                                            **config)
 
-    # Trained Model Data:
-    model_low_bias.eval()
-    model_high_bias.eval()
-
-    activations = {}
-    activations_wide = {}
-    model_low_bias.set_activations_hook(activations)
-    model_high_bias.set_activations_hook(activations_wide)
-
-    # tests
-    torch.set_printoptions(precision=2, sci_mode=False)
-    # print(f"\n true y: {y}")
-    # print("\n y_pred low: ", data_low["final predicted y"])
-    # print("\n y_pred high: ", data_high["final predicted y"])
-
-    # figures
-    fig = Figures(config, data_low, data_high)
-    fig.loss_graph()
-    fig.accuracy_graph()
+    return {"X": X, "y": y, "config": config, "model_low": model_low, "data_low": data_low, "model_high": model_high,
+            "data_high": data_high}
 
 
 if __name__ == '__main__':
-    run_experiment1(PARAMS, seed=0)
+    exp1 = run_experiment(PARAMS, odd=False, deciding_feature=0)
+    exp1_trained_models = (exp1["model_low"], exp1["model_high"])
+    exp2 = run_experiment(PARAMS, exp1_trained_models, odd=False, deciding_feature=1)
+    exp3 = run_experiment(PARAMS, exp1_trained_models, odd=True, deciding_feature=0)
+
+    # figures
+    fig = Figures(exp1, exp2, exp3)
+    fig.loss_graph(("initial", "odd"))
+    fig.accuracy_graph(("initial", "flex"))
+    fig.accuracy_graph(("initial", "odd"))

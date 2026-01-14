@@ -13,12 +13,13 @@ from datasets import SummerfieldTask
 from models import MLP
 
 
-def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
-                    X, y, dataloader, optimizer_type=optim.Adam,
-                    num_epochs=150, device=None, activation_type=None):
+def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
+                    optimizer_type=optim.Adam,
+                    num_epochs=150, device=None, activation_type=None, **kwargs):
     """
     Initializes and trains an MLP model, capturing activation distances and loss history.
 
+    :param model: MLP model
     :param input_size: Integer, number of input features (total dimension of concatenated one-hots).
     :param hidden_size: Integer, number of neurons in each hidden layer.
     :param n_hidden: Integer, number of hidden layers (excluding input and output).
@@ -38,15 +39,17 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
     y = y.to(device)
 
     # Measurement:
-    data = {"input distances": None, "initial activations distances": None, "losses": [], "accuracies": [], "X": X, "y": y, "final predicted y": None}
+    data = {"losses": [], "accuracies": [], "X": X, "y": y}
 
-    # Model setup
+    if not model:
+        # Model setup
+        model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=activation_type)
+        model = model.to(device)
+        model.reinitialize(seed=42)
+
     activations = {}
-    model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=activation_type)
-    model = model.to(device)
-    model.reinitialize(seed=42)
     model.set_activations_hook(activations)
-    criterion = nn.BCELoss()
+    criterion = nn.BCEWithLogitsLoss()  # removed sigmoid - Should be fixed for Oded's experiment
     optimizer = optimizer_type(model.parameters(), lr=0.004)
 
     # Saving distances data before training
@@ -54,7 +57,8 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
     data["input distances"] = pairwise_distances(X.cpu().detach().numpy())[np.triu_indices(X.shape[0])]
     with torch.no_grad():
         model(X)  # filling "activations" with data
-        data["initial activations distances"] = {k: pairwise_distances(v)[np.triu_indices(X.shape[0])] for k, v in activations.items()}
+        data["initial activations distances"] = {k: pairwise_distances(v)[np.triu_indices(X.shape[0])] for k, v in
+                                                 activations.items()}
     model.remove_activations_hook()
 
     # Training loop
@@ -75,7 +79,7 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
 
             # Data saving:
             data["losses"].append(loss.item() / len(dataloader))
-            data["accuracies"].append(1-torch.abs(outputs - labels).mean().item())
+            data["accuracies"].append(1 - torch.abs(torch.sigmoid(outputs) - labels).mean().item())
 
     # Final evaluation
     model.eval()
@@ -89,7 +93,7 @@ def train_mlp_model(input_size, hidden_size, n_hidden, output_size, w_scale, b_s
 
 
 def create_dataset(features_types, odd_dim
-                   , deciding_feature=0, odd=False, seed=0, device=None):
+                   , deciding_feature=0, odd=False, seed=0, device=None, unique_points_only=False, batch_size = 1, **kwargs):
     """
     A wrapper to initialize the task, generate data, and prepare a DataLoader.
     :param features_types: Dimensions for each One-Hot encoded feature.
@@ -106,46 +110,65 @@ def create_dataset(features_types, odd_dim
     torch.manual_seed(seed)
     st = SummerfieldTask(features_types, odd_dim)
 
-    X, y = st.get_data(deciding_feature, odd)
+    X, y = st.get_data(deciding_feature, odd, unique_points_only)
     X = X.to(device)
     y = y.to(device)
 
     # Create DataLoader
     dataset = TensorDataset(X, y)
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     return X, y, dataloader
 
 
 class Figures():  # continue working on it
-    def __init__(self, config, data_low, data_high):
+    def __init__(self, exp_initial = None, exp_odd = None, exp_flex = None):
         os.makedirs("figures", exist_ok=True)
-        plt.figure(figsize=(10, 6))
-        self.data_low = data_low
-        self.data_high = data_high
-        self.config = config
+        self.data = {"initial":exp_initial,
+                     "odd":exp_odd,
+                     "flex":exp_flex}
 
-    def loss_graph(self):
 
-        plt.plot(self.data_low["losses"], label=f'Low Variance Scale', color='blue')
-        plt.plot(self.data_high["losses"], label=f'High Variance Scale)', color='red')
+    def graph_temp1(self, y, y_axis_name, exps, log = False):
+        low = []
+        high = []
+        lines = []
+        for exp_name in exps:
+            exp = self.data[exp_name]
+            low += exp["data_low"][y]
+            high += exp["data_high"][y]
+            lines.append(len(low))
+        lines = lines[:-1]
+        plt.figure(figsize=(12, 6))
+        plt.plot(low, label=f'Low Variance Scale (RichMLP)', color='blue')
+        plt.plot(high, label=f'High Variance Scale (LazyMLP)', color='red')
+        for line in lines:
+            plt.axvline(x=line, color='gray', linestyle='--', linewidth=1)
+            plt.text(line - 3, plt.ylim()[1] * 0.15, 'Shift-point', color='gray', fontsize=9, rotation=90, verticalalignment='bottom', horizontalalignment='right')
 
-        plt.title('Training Loss Comparison')
+        plt.title(f'{y.capitalize()} Comparison in {exps} Experiments')
         plt.xlabel('Epoch')
-        plt.ylabel('BCE Loss')
-        plt.yscale('log')
+        plt.ylabel(y_axis_name)
+        if log:
+            plt.yscale('log')
         plt.legend()
         plt.grid(True, which="both", ls="-", alpha=0.5)
         plt.show()
 
-    def accuracy_graph(self):
-        plt.plot(self.data_low["accuracies"], label=f'Low Variance Scale', color='blue')
-        plt.plot(self.data_high["accuracies"], label=f'High Variance Scale)', color='red')
+    def loss_graph(self, exps):
+        self.graph_temp1("losses", "BCE loss", exps)
 
-        plt.title('Training Accuracies Comparison')
-        plt.xlabel('Epoch')
-        plt.ylabel('Accuracy')
-        plt.legend()
-        plt.grid(True, which="both", ls="-", alpha=0.5)
-        plt.show()
+    def accuracy_graph(self, exps):
+        self.graph_temp1("accuracies", "Accuracy", exps)
 
 
+def added_config(config, seed, device, odd, deciding_feature, unique_points_only):
+    config["seed"] = seed
+    config["input_size"] = sum(config["features_types"]) + config["odd_dim"]
+    if device is None:
+        config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
+    config["optimizer_type"] = optim.Adam if config["optimizer_type"] == "Adam" else optim.SGD
+    config["odd"] = odd
+    config["deciding_feature"] = deciding_feature
+    config["unique_points_only"] = unique_points_only
+    return config

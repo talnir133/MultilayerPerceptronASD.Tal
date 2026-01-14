@@ -49,7 +49,7 @@ class SummerfieldTask:
         self.shapes = torch.tensor(np.array([np.concatenate(combo) for combo in itertools.product(*features)])).float()
         self.names = torch.tensor(list(itertools.product(*names))).float()
 
-    def get_data(self, deciding_feature=0, odd=False):
+    def get_data(self, deciding_feature=0, odd=False, only_unique=False):
         """
         Generates the final dataset and labels.
         :param deciding_feature: The feature index used to determine the label.
@@ -63,11 +63,10 @@ class SummerfieldTask:
         x = self.shapes.clone()
         if not odd and self.odd_dim != 0:
             x[:, -self.odd_dim:] = 0
+            if only_unique:
+                combined = torch.cat((x, y), dim=1)
+                unique_combined = torch.unique(combined, dim=0)
+                x = unique_combined[:, :-1]
+                y = unique_combined[:, -1:]
 
         return x, y
-
-
-# st = SummerfieldTask([2, 2], 1)
-# x, y = st.get_data(0, odd=False)
-# print(x)
-# print(y)
