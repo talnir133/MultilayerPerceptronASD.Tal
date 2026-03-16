@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import matplotlib
-
+import copy
 matplotlib.use('TkAgg')
 from sklearn.metrics.pairwise import pairwise_distances
 from datasets import SummerfieldTask
@@ -123,29 +123,26 @@ def create_dataset(features_types, odd_dim
 
 
 class Figures():  # continue working on it
-    def __init__(self, exp_initial, exp_odd=None, exp_flex=None):
-        os.makedirs("figures", exist_ok=True)
-        self.data = {"initial": exp_initial,
-                     "odd": exp_odd,
-                     "flex": exp_flex}
-        if exp_initial:
-            self.variable = "Weights" if exp_initial["config"]["b_scale_low"] == 0 else "Biases"
+    def __init__(self, results, save):
+        self.save = save
+        folder_name = results["initial"]["config"]["config_name"]
+        self.path = f"figures/{folder_name}"
+        self.data = results
+        self.exps = results["initial"]["config"]["exp_stages"]
+        if self.data["initial"]:
+            self.variable = "Weights" if self.data["initial"]["config"]["b_scale_low"] == 0 else "Biases"
 
-    def graph_temp1(self, y, y_axis_name, exps, log=False):
+    def graph_temp1(self, y, y_axis_name, log=False):
         act_type = self.data["initial"]["config"]["activation_type"]
         n_epochs = self.data["initial"]["config"]["num_epochs"]
         low = []
         high = []
         lines = []
-        exp_name = 'initial condition'
-        if len(exps)==2:
-            if exps[1] == 'flex':
-                exp_name = 'flexibility'
-            if exps[1] == 'odd':
-                exp_name = 'generalization'
-
-        for exp_name in exps:
-            exp = self.data[exp_name]
+        exp_name = 'Initial condition'
+        if len(self.exps)==2:
+                exp_name = self.exps[1].capitalize()
+        for name in self.exps:
+            exp = self.data[name]
             low += exp["data_low"][y]
             high += exp["data_high"][y]
             lines.append(len(low))
@@ -160,7 +157,7 @@ class Figures():  # continue working on it
         plt.text(1.02, 0.5, f'activation function: {act_type}',
                  rotation=270, fontsize=10, verticalalignment='center', transform=plt.gca().transAxes)
         plt.title(
-            f"Summerfield's Replication, {y.capitalize()} Comparison in {exp_name.capitalize()} Experiment, Different {self.variable} Variances ",
+            f"Summerfield's Replication, {y.capitalize()} Comparison in {exp_name} Experiment, Different {self.variable} Variances ",
             fontweight='bold')
         plt.xlabel(f'Batches ({n_epochs} epochs per stage in total)')
         plt.ylabel(y_axis_name)
@@ -168,23 +165,31 @@ class Figures():  # continue working on it
             plt.yscale('log')
         plt.legend()
         plt.grid(True, which="both", ls="-", alpha=0.5)
-        plt.savefig(f"figures/{y}_comparison, {exp_name}, {self.variable}, {act_type}.png", bbox_inches='tight', dpi=300)
+        if self.save:
+            plt.savefig(f"{self.path}/{y}_comparison, {exp_name}, {self.variable}, {act_type}.png", bbox_inches='tight', dpi=300)
         plt.show()
 
-    def loss_graph(self, exps):
-        self.graph_temp1("losses", "BCE loss", exps)
+    def loss_graph(self):
+        self.graph_temp1("losses", "BCE loss")
 
-    def accuracy_graph(self, exps):
-        self.graph_temp1("accuracies", "Accuracy", exps)
+    def accuracy_graph(self):
+        self.graph_temp1("accuracies", "Accuracy")
 
 
-def added_config(config, seed, device, odd, deciding_feature, unique_points_only):
-    config["seed"] = seed
+def added_config(stage, config):
     config["input_size"] = sum(config["features_types"]) + config["odd_dim"]
-    if device is None:
-        config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config["optimizer_type"] = optim.Adam if config["optimizer_type"] == "Adam" else optim.SGD
+    config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if config["optimizer_type"] == "Adam":
+        config["optimizer_type"] = optim.Adam
+    if config["optimizer_type"] == "SGD":
+        config["optimizer_type"] = optim.SGD
+    odd, deciding_feature = False, 0
+    if stage == "flexibility":
+        odd, deciding_feature = False, 1
+    if stage == "generalization":
+        odd, deciding_feature = True, 0
+    config["stage"] = stage
     config["odd"] = odd
     config["deciding_feature"] = deciding_feature
-    config["unique_points_only"] = unique_points_only
+
     return config
