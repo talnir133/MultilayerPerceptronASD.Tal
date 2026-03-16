@@ -179,10 +179,11 @@ class Figures():  # continue working on it
 def added_config(stage, config):
     config["input_size"] = sum(config["features_types"]) + config["odd_dim"]
     config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if config["optimizer_type"] == "Adam":
-        config["optimizer_type"] = optim.Adam
-    if config["optimizer_type"] == "SGD":
-        config["optimizer_type"] = optim.SGD
+    config["optimizer_type"] = optim.Adam if config["optimizer_type"] == "Adam" else optim.SGD
+    # if config["optimizer_type"] == "Adam":
+    #     config["optimizer_type"] = optim.Adam
+    # if config["optimizer_type"] == "SGD":
+    #     config["optimizer_type"] = optim.SGD
     odd, deciding_feature = False, 0
     if stage == "flexibility":
         odd, deciding_feature = False, 1

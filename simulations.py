@@ -34,11 +34,8 @@ FIGURES_CONFIG = ["accuracy_graph"]
 def run_stage(stage, config, models=(0, 0)):
     config = copy.deepcopy(config)
     config = added_config(stage, config)
-    print(config)
 
     X, y, dataloader = create_dataset(**config)
-    print(X)
-    print(y)
 
     # Training
     model_low, data_low = train_mlp_model(models[0], X, y, dataloader, w_scale=config["w_scale_low"],
@@ -80,8 +77,35 @@ def create_figures(results, config, figures_config, save=True):
 
 
 if __name__ == '__main__':
-    # RESULTS = run_experiment(CONFIG1)
-    # create_figures(RESULTS, CONFIG1, FIGURES_CONFIG)
+    RESULTS = run_experiment(CONFIG1)
+    create_figures(RESULTS, CONFIG1, FIGURES_CONFIG)
 
-    RESULTS = run_experiment(CONFIG2)
-    create_figures(RESULTS, CONFIG2, FIGURES_CONFIG)
+    if __name__ == '__main__':
+        print("--- Running Spoiled Experiment ---")
+
+        # שלב 1: Initial (מייצר משקולות שמתמקדות בפיצ'ר 0 עם Adam)
+        exp1 = run_stage("initial", CONFIG1)
+
+        # שומרים רפרנס למודלים בזיכרון (כאן מתחיל הבאג!)
+        spoiled_models = (exp1["model_low"], exp1["model_high"])
+
+        # שלב 2: Flexibility
+        # מעבירים את המודלים - הפונקציה דורסת את המשקולות ומעבירה אותן לפיצ'ר 1!
+        # (ובגלל הבאג בקונפיגורציה, זה רץ עם SGD)
+        exp2 = run_stage("flexibility", exp1["config"], models=spoiled_models)
+
+        # שלב 3: Generalization
+        # אנחנו מעבירים שוב את אותם מודלים! הם עכשיו הרוסים ומכוונים לפיצ'ר 1.
+        # הרשת תנסה בקושי רב לחזור לפיצ'ר 0 עם הוספת רעש (שוב עם SGD).
+        exp3 = run_stage("generalization", exp2["config"], models=spoiled_models)
+
+        # עכשיו אנחנו "מרמים" את פונקציית הגרפים החדשה.
+        # נבקש ממנה לצייר את ה-Initial מחובר ישירות ל-Generalization
+        # (כדי שזה ייראה כמו הגרף הישן שחתך את ה-Flexibility החוצה מהתצוגה).
+        spoiled_results = {"initial": exp1, "generalization": exp3}
+        spoiled_results["initial"]["config"]["exp_stages"] = ["initial", "generalization"]
+
+        create_figures(spoiled_results, spoiled_results["initial"]["config"], FIGURES_CONFIG, save=False)
+    #
+    # RESULTS = run_experiment(CONFIG2)
+    # create_figures(RESULTS, CONFIG2, FIGURES_CONFIG)

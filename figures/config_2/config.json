@@ -1,11 +1,11 @@
 {
     "config_name": "config_2",
-    "num_epochs": 100,
+    "num_epochs": 1000,
     "features_types": [
-        2,
-        2
+        4,
+        4
     ],
-    "odd_dim": 4,
+    "odd_dim": 8,
     "hidden_size": 30,
     "n_hidden": 1,
     "output_size": 1,
