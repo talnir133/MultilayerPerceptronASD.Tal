@@ -80,8 +80,8 @@ def create_figures(results, config, figures_config, save=True):
 
 
 if __name__ == '__main__':
-    # RESULTS = run_experiment(CONFIG1)
-    # create_figures(RESULTS, CONFIG1, FIGURES_CONFIG)
+    RESULTS = run_experiment(CONFIG1)
+    create_figures(RESULTS, CONFIG1, FIGURES_CONFIG)
 
     RESULTS = run_experiment(CONFIG2)
     create_figures(RESULTS, CONFIG2, FIGURES_CONFIG)
