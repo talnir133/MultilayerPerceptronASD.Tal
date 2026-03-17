@@ -1,44 +1,14 @@
-import copy
-
 from utils import *
 import json
+from gui_app import launch_gui
 
-# Parameters
-CONFIG1 = {
-    "config_name": "config_1",
-    "num_epochs": 1000,
-    "features_types": [4, 4],
-    "odd_dim": 8,
-    "hidden_size": 30,
-    "n_hidden": 1,
-    "output_size": 1,
-    "b_scale_low": 0.1,
-    "b_scale_high": 2,
-    "w_scale_low": 1,
-    "w_scale_high": 1,
-    "optimizer_type": "Adam",
-    "activation_type": "Tanh",
-    "batch_size": 128,
-    "unique_points_only": False,
-    "seed": 0,
-    "exp_stages": ["initial", "flexibility"]
-}
-
-CONFIG2 = copy.deepcopy(CONFIG1)
-CONFIG2["config_name"] = "config_2"
-CONFIG2["exp_stages"] = ["initial", "generalization"]
-
-FIGURES_CONFIG = ["accuracy_graph"]
+FIGURES_CONFIG = ["accuracy_graph", "loss_graph"]
 
 
 def run_stage(stage, config, models=(0, 0)):
     config = copy.deepcopy(config)
     config = added_config(stage, config)
-    print(config)
-
     X, y, dataloader = create_dataset(**config)
-    print(X)
-    print(y)
 
     # Training
     model_low, data_low = train_mlp_model(models[0], X, y, dataloader, w_scale=config["w_scale_low"],
@@ -73,15 +43,33 @@ def create_figures(results, config, figures_config, save=True):
         os.makedirs(path, exist_ok=True)
         with open(path + "/config.json", "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
-    fig = Figures(results, save)
+    fig = Figures(results, config, save)
     for method_name in figures_config:
         plot_method = getattr(fig, method_name)
         plot_method()
 
 
-if __name__ == '__main__':
-    RESULTS = run_experiment(CONFIG1)
-    create_figures(RESULTS, CONFIG1, FIGURES_CONFIG)
+def run_simulation_from_gui(figures_config):
+    def simulation_callback(config):
+        # Runs experiment and creates figures using the global FIGURES_CONFIG
+        results = run_experiment(config)
+        create_figures(results, config, figures_config)
 
-    RESULTS = run_experiment(CONFIG2)
-    create_figures(RESULTS, CONFIG2, FIGURES_CONFIG)
+    launch_gui(simulation_callback)
+
+def run_simulation_from_config_file(json_name, figures_config):
+    file_path = f"configs/{json_name}.json"
+    with open(file_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    print(f"--- Running Simulation from configuration: {json_name} ---")
+    results = run_experiment(config)
+    create_figures(results, config, figures_config)
+    print(f"--- Finished! Results saved in figures/{config['config_name']} ---")
+
+
+if __name__ == '__main__':
+    # OPTION A: Launch the GUI
+    run_simulation_from_gui(FIGURES_CONFIG)
+
+    # OPTION B: Bypass GUI and run from a specific JSON file
+    # run_from_config_file("Test - Initial (seed 2)", FIGURES_CONFIG)

@@ -123,7 +123,8 @@ def create_dataset(features_types, odd_dim
 
 
 class Figures():  # continue working on it
-    def __init__(self, results, save):
+    def __init__(self, results, config, save):
+        self.config = config
         self.save = save
         folder_name = results["initial"]["config"]["config_name"]
         self.path = f"figures/{folder_name}"
@@ -133,40 +134,63 @@ class Figures():  # continue working on it
             self.variable = "Weights" if self.data["initial"]["config"]["b_scale_low"] == 0 else "Biases"
 
     def graph_temp1(self, y, y_axis_name, log=False):
-        act_type = self.data["initial"]["config"]["activation_type"]
-        n_epochs = self.data["initial"]["config"]["num_epochs"]
-        low = []
-        high = []
-        lines = []
-        exp_name = 'Initial condition'
-        if len(self.exps)==2:
-                exp_name = self.exps[1].capitalize()
+        cfg = self.config
+        act_type = cfg.get("activation_type", "Unknown")
+        n_epochs = cfg.get("num_epochs", 0)
+
+        low, high, lines = [], [], []
+        exp_name = self.exps[1].capitalize() if len(self.exps) == 2 else 'Initial condition'
+
         for name in self.exps:
             exp = self.data[name]
             low += exp["data_low"][y]
             high += exp["data_high"][y]
             lines.append(len(low))
-        lines = lines[:-1]
+
         plt.figure(figsize=(12, 6))
-        plt.plot(low, label=f'Low Variance (RichMLP)', color='blue')
-        plt.plot(high, label=f'High Variance (LazyMLP)', color='red')
-        for line in lines:
+        plt.subplots_adjust(right=0.75)
+
+        plt.plot(low, label='Low Variance (RichMLP)', color='blue')
+        plt.plot(high, label='High Variance (LazyMLP)', color='red')
+
+        for line in lines[:-1]:
             plt.axvline(x=line, color='gray', linestyle='--', linewidth=1)
-            plt.text(line - 5, sum(plt.ylim()) / 2, 'Shift-point', color='gray', fontsize=9, rotation=90,
-                     verticalalignment='center', horizontalalignment='right')
-        plt.text(1.02, 0.5, f'activation function: {act_type}',
-                 rotation=270, fontsize=10, verticalalignment='center', transform=plt.gca().transAxes)
-        plt.title(
-            f"Summerfield's Replication, {y.capitalize()} Comparison in {exp_name} Experiment, Different {self.variable} Variances ",
-            fontweight='bold')
+            plt.text(line - 5, sum(plt.ylim()) / 2, 'Shift-point', color='gray', fontsize=9,
+                     rotation=90, va='center', ha='right')
+
+        config_text = "Simulation's Configurations:\n" + "-" * 32 + "\n\n"
+        categories = {
+            "1. Input": ['features_types', 'odd_dim', 'batch_size', 'seed', 'unique_points_only'],
+            "2. Network": ['hidden_size', 'n_hidden', 'output_size', 'b_scale_low', 'b_scale_high',
+                           'w_scale_low', 'w_scale_high', 'optimizer_type', 'activation_type'],
+            "3. Experiment": ['num_epochs', 'exp_stages']
+        }
+
+        for title, keys in categories.items():
+            config_text += f"{title}\n"
+            for k in keys:
+                val = cfg.get(k)
+                if isinstance(val, list): val = ', '.join(map(str, val))
+                config_text += f"   {k}: {val}\n"
+            config_text += "\n"
+
+        plt.gca().text(1.05, 1.0, config_text.strip(), transform=plt.gca().transAxes,
+                       fontsize=9, va='top',
+                       bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
+
+        plt.title(f"Summerfield's Replication, {y.capitalize()} Comparison in {exp_name} Experiment", fontweight='bold')
         plt.xlabel(f'Batches ({n_epochs} epochs per stage in total)')
         plt.ylabel(y_axis_name)
-        if log:
-            plt.yscale('log')
+
+        if log: plt.yscale('log')
         plt.legend()
         plt.grid(True, which="both", ls="-", alpha=0.5)
+
         if self.save:
-            plt.savefig(f"{self.path}/{y}_comparison, {exp_name}, {self.variable}, {act_type}.png", bbox_inches='tight', dpi=300)
+            safe_name = exp_name.replace(" ", "_")
+            plt.savefig(f"{self.path}/{y}_comparison_{safe_name}_{self.variable}_{act_type}.png", bbox_inches='tight',
+                        dpi=300)
+
         plt.show()
 
     def loss_graph(self):

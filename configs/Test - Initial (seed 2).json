@@ -1,0 +1,24 @@
+{
+    "config_name": "Test - Initial (seed 2)",
+    "num_epochs": 1000,
+    "features_types": [
+        4,
+        4
+    ],
+    "odd_dim": 8,
+    "hidden_size": 30,
+    "n_hidden": 1,
+    "output_size": 1,
+    "b_scale_low": 0.1,
+    "b_scale_high": 2.0,
+    "w_scale_low": 1.0,
+    "w_scale_high": 1.0,
+    "optimizer_type": "Adam",
+    "activation_type": "Tanh",
+    "batch_size": 128,
+    "unique_points_only": false,
+    "seed": 2,
+    "exp_stages": [
+        "initial"
+    ]
+}
