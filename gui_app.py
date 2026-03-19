@@ -111,7 +111,7 @@ class ConfigGUI(QWidget):
 
     def add_double_spinbox(self, layout, name, value):
         w = QDoubleSpinBox();
-        w.setRange(0.0, 10.0);
+        w.setRange(0.0, 100.0);
         w.setSingleStep(0.1);
         w.setValue(value)
         self.inputs[name] = w;

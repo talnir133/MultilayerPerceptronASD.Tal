@@ -16,7 +16,7 @@ from models import MLP
 
 def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
                     optimizer_type=optim.Adam,
-                    num_epochs=150, device=None, activation_type=None, **kwargs):
+                    device=None, activation_type=None, **kwargs):
     """
     Initializes and trains an MLP model, capturing activation distances and loss history.
 
@@ -31,7 +31,6 @@ def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, 
     :param y: Tensor, the full label set used for final loss evaluation.
     :param dataloader: PyTorch DataLoader providing shuffled batches for the training loop.
     :param optimizer_type: The PyTorch optimizer class to use (e.g., optim.Adam or optim.SGD).
-    :param num_epochs: Integer, the number of complete passes over the dataset.
     :param device: torch.device, specifies whether to train on 'cpu' or 'cuda'.
     :param activation_type: String, the type of activation function for hidden layers ('RelU', 'Sigmoid', 'Tanh', etc.).
     """
@@ -46,7 +45,7 @@ def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, 
         # Model setup
         model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=activation_type)
         model = model.to(device)
-        model.reinitialize(seed=42)
+        model.reinitialize(seed=kwargs.get("seed"))
 
     activations = {}
     model.set_activations_hook(activations)
@@ -64,7 +63,7 @@ def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, 
 
     # Training loop
     model.train()
-    for epoch in tqdm(range(num_epochs), desc="Training"):
+    for epoch in tqdm(range(kwargs.get("epoches")), desc="Training"):
         for inputs, labels in dataloader:
             inputs = inputs.to(device)
             labels = labels.to(device)
@@ -126,70 +125,84 @@ class Figures():  # continue working on it
     def __init__(self, results, config, save):
         self.config = config
         self.save = save
-        folder_name = results["initial"]["config"]["config_name"]
+        folder_name = config["exp_name"]
         self.path = f"figures/{folder_name}"
-        self.data = results
-        self.exps = results["initial"]["config"]["exp_stages"]
-        if self.data["initial"]:
-            self.variable = "Weights" if self.data["initial"]["config"]["b_scale_low"] == 0 else "Biases"
+        self.results = results
 
     def graph_temp1(self, y, y_axis_name, log=False):
         cfg = self.config
-        act_type = cfg.get("activation_type", "Unknown")
-        n_epochs = cfg.get("num_epochs", 0)
+        exp_name = cfg.get("exp_name", "Experiment").capitalize()
 
-        low, high, lines = [], [], []
-        exp_name = self.exps[1].capitalize() if len(self.exps) == 2 else 'Initial condition'
+        low, high, boundaries, stage_names = [], [], [0], []
 
-        for name in self.exps:
-            exp = self.data[name]
-            low += exp["data_low"][y]
-            high += exp["data_high"][y]
-            lines.append(len(low))
+        for step_name, step_results in self.results:
+            low += step_results["data_low"][y]
+            high += step_results["data_high"][y]
+            boundaries.append(len(low))
+            stage_names.append(step_name)
 
-        plt.figure(figsize=(12, 6))
-        plt.subplots_adjust(right=0.75)
+        plt.figure(figsize=(15, 6))
+        plt.subplots_adjust(right=0.65, bottom=0.15)
 
         plt.plot(low, label='Low Variance (RichMLP)', color='blue')
         plt.plot(high, label='High Variance (LazyMLP)', color='red')
 
-        for line in lines[:-1]:
+        ax = plt.gca()
+
+        for i in range(1, len(boundaries) - 1):
+            line = boundaries[i]
             plt.axvline(x=line, color='gray', linestyle='--', linewidth=1)
             plt.text(line - 5, sum(plt.ylim()) / 2, 'Shift-point', color='gray', fontsize=9,
                      rotation=90, va='center', ha='right')
+
+        for i in range(len(stage_names)):
+            start = boundaries[i]
+            end = boundaries[i + 1]
+            center = (start + end) / 2
+            # transform=ax.get_xaxis_transform() מאפשר לנו למקם את X לפי הדאטה ו-Y באופן יחסי לגרף (0 זה הלמטה של הגרף)
+            ax.text(center, -0.06, stage_names[i], transform=ax.get_xaxis_transform(),
+                    ha='center', va='top', fontsize=10, fontweight='bold', color='darkblue')
 
         config_text = "Simulation's Configurations:\n" + "-" * 32 + "\n\n"
         categories = {
             "1. Input": ['features_types', 'odd_dim', 'batch_size', 'seed', 'unique_points_only'],
             "2. Network": ['hidden_size', 'n_hidden', 'output_size', 'b_scale_low', 'b_scale_high',
-                           'w_scale_low', 'w_scale_high', 'optimizer_type', 'activation_type'],
-            "3. Experiment": ['num_epochs', 'exp_stages']
+                           'w_scale_low', 'w_scale_high', 'optimizer_type', 'activation_type']
         }
 
         for title, keys in categories.items():
             config_text += f"{title}\n"
             for k in keys:
                 val = cfg.get(k)
-                if isinstance(val, list): val = ', '.join(map(str, val))
+                if isinstance(val, list):
+                    val = ', '.join(map(str, val))
                 config_text += f"   {k}: {val}\n"
             config_text += "\n"
+
+        config_text += "3. Experiment Stages:\n"
+        for stage in cfg.get('exp_stages', []):
+            name = stage.get('stage_name', 'Unnamed')
+            eps = stage.get('epoches', 0)
+            feat = stage.get('deciding_feature', 0)
+            odd = 'T' if stage.get('odd') else 'F'
+            config_text += f"   stage: {name}, epochs: {eps}, deciding_feature: {feat}, odd: {odd}\n"
 
         plt.gca().text(1.05, 1.0, config_text.strip(), transform=plt.gca().transAxes,
                        fontsize=9, va='top',
                        bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
 
-        plt.title(f"Summerfield's Replication, {y.capitalize()} Comparison in {exp_name} Experiment", fontweight='bold')
-        plt.xlabel(f'Batches ({n_epochs} epochs per stage in total)')
+        plt.title(f"Summerfield's Replication, {y.capitalize()} Comparison in {exp_name}", fontweight='bold')
+
+        plt.xlabel('Batches', labelpad=20)
         plt.ylabel(y_axis_name)
 
         if log: plt.yscale('log')
-        plt.legend()
+        plt.legend(loc='best')
         plt.grid(True, which="both", ls="-", alpha=0.5)
 
         if self.save:
             safe_name = exp_name.replace(" ", "_")
-            plt.savefig(f"{self.path}/{y}_comparison_{safe_name}_{self.variable}_{act_type}.png", bbox_inches='tight',
-                        dpi=300)
+            plt.savefig(f"{self.path}/{y}_comparison_{safe_name}.png", bbox_inches='tight', dpi=300)
 
         plt.show()
 
@@ -200,20 +213,14 @@ class Figures():  # continue working on it
         self.graph_temp1("accuracies", "Accuracy")
 
 
-def added_config(stage, config):
+def merge_configs(stage_config, config):
     config["input_size"] = sum(config["features_types"]) + config["odd_dim"]
     config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if config["optimizer_type"] == "Adam":
         config["optimizer_type"] = optim.Adam
     if config["optimizer_type"] == "SGD":
         config["optimizer_type"] = optim.SGD
-    odd, deciding_feature = False, 0
-    if stage == "flexibility":
-        odd, deciding_feature = False, 1
-    if stage == "generalization":
-        odd, deciding_feature = True, 0
-    config["stage"] = stage
-    config["odd"] = odd
-    config["deciding_feature"] = deciding_feature
+    config.update(stage_config)
+    print("merged config: ", config)
 
     return config
