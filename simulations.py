@@ -5,23 +5,31 @@ from gui_app import launch_gui
 FIGURES_CONFIG = ["accuracy_graph"]
 
 
-def run_stage(stage_config, config, models=(None, None)):
-    print(f"--- Running Stage: {stage_config['stage_name']} ---")
-    config = copy.deepcopy(config)
-    config = merge_configs(stage_config, config)
-    X, y, dataloader = create_dataset(**config)
+def run_stage(stage_config, global_config, models=(None, None)):
+    print(f"\n--- Running Stage: {stage_config['stage_name']} ---")
+    current_cfg = copy.deepcopy(global_config)
+    current_cfg = merge_configs(stage_config, current_cfg)
+    X, y, dataloader = create_dataset(**current_cfg)
 
-    # Training
-    model_low, data_low = train_mlp_model(models[0], X, y, dataloader, w_scale=config["w_scale_low"],
-                                          b_scale=config["b_scale_low"],
-                                          **config)
-    model_high, data_high = train_mlp_model(models[1], X, y, dataloader, w_scale=config["w_scale_high"],
-                                            b_scale=config["b_scale_high"],
-                                            **config)
+    model_low, data_low = train_mlp_model(
+        models[0], X, y, dataloader,
+        w_scale=current_cfg["w_scale_low"],
+        b_scale=current_cfg["b_scale_low"],
+        **current_cfg
+    )
 
-    return {"X": X, "y": y, "config": config, "model_low": model_low, "data_low": data_low,
-            "model_high": model_high,
-            "data_high": data_high}
+    model_high, data_high = train_mlp_model(
+        models[1], X, y, dataloader,
+        w_scale=current_cfg["w_scale_high"],
+        b_scale=current_cfg["b_scale_high"],
+        **current_cfg
+    )
+
+    return {
+        "X": X, "y": y, "config": current_cfg,
+        "model_low": model_low, "data_low": data_low,
+        "model_high": model_high, "data_high": data_high
+    }
 
 
 def run_experiment(config):
@@ -29,11 +37,11 @@ def run_experiment(config):
     if len(config["exp_stages"]) == 0:
         raise ValueError("Experiment stages list is empty. Please provide at least one stage in the configuration.")
 
-    models = (None,None)
+    models = (None, None)
     for stage_config in config["exp_stages"]:
         stage_results = run_stage(stage_config, config, models)
         models = (stage_results["model_low"], stage_results["model_high"])
-        exps_results.append([stage_config["stage_name"],stage_results])
+        exps_results.append([stage_config["stage_name"], stage_results])
     return exps_results
 
 
@@ -59,33 +67,42 @@ def run_simulation_from_gui(figures_config):
 
     launch_gui(simulation_callback)
 
+
 def run_simulation_from_config_file(json_name, figures_config):
     file_path = f"configs/{json_name}.json"
     with open(file_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
-    print(f"--- Running Simulation from configuration: {json_name} ---")
+    print(f"--- Running Simulation from configuration: {json_name} ---\n ")
     results = run_experiment(config)
     create_figures(results, config, figures_config)
     print(f"--- Finished! Results saved in figures/{config['exp_name']} ---")
+
+
+def run_simulation_from_dictionary(config, figures_config):
+    print(f"--- Running Simulation from provided configuration dictionary ---")
+    results = run_experiment(config)
+    create_figures(results, config, figures_config)
+    print(f"--- Finished! Results saved in figures/{config['exp_name']} ---")
+
 
 CONFIG = {
     "exp_name": "config_1",
     "features_types": [4, 4],
     "odd_dim": 8,
     "hidden_size": 30,
-    "n_hidden": 1,
+    "n_hidden": 0,
     "output_size": 1,
-    "b_scale_low": 0.1,
-    "b_scale_high": 2.0,
-    "w_scale_low": 1.0,
-    "w_scale_high": 1.0,
+    "b_scale_low": 0,
+    "b_scale_high": 0,
+    "w_scale_low": 0.1,
+    "w_scale_high": 50,
     "optimizer_type": "Adam",
-    "activation_type": "Tanh",
+    "activation_type": "Identity",
     "batch_size": 128,
     "unique_points_only": False,
     "seed": 0,
-    "exp_stages": [{"stage_name": "M1", "deciding_feature": 0, "odd": False, "epoches": 100},
-                   {"stage_name": "M1-Flex", "deciding_feature": 1, "odd": False, "epoches": 100}]
+    "exp_stages": [{"stage_name": "M1", "deciding_feature": 0, "odd": False, "epoches": 125},
+                   {"stage_name": "M1-Flex", "deciding_feature": 1, "odd": False, "epoches": 125}]
 }
 
 if __name__ == '__main__':
@@ -93,7 +110,7 @@ if __name__ == '__main__':
     # run_simulation_from_gui(FIGURES_CONFIG)
 
     # OPTION B: Bypass GUI and run from a specific JSON file
-    # run_simulation_from_config_file("Data Test", FIGURES_CONFIG)
+    # run_simulation_from_config_file("test_config_gui", FIGURES_CONFIG)
 
-    results = run_experiment(CONFIG)
-    create_figures(results, CONFIG, FIGURES_CONFIG)
+    # OPTION C: Bypass GUI and run from a provided configuration dictionary
+    run_simulation_from_dictionary(CONFIG, FIGURES_CONFIG)

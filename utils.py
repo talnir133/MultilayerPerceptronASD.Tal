@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import matplotlib
 import copy
+
 matplotlib.use('TkAgg')
 from sklearn.metrics.pairwise import pairwise_distances
 from datasets import SummerfieldTask
@@ -15,8 +16,7 @@ from models import MLP
 
 
 def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
-                    optimizer_type=optim.Adam,
-                    device=None, activation_type=None, **kwargs):
+                    optimizer_type, device, activation_type, **kwargs):
     """
     Initializes and trains an MLP model, capturing activation distances and loss history.
 
@@ -43,9 +43,10 @@ def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, 
 
     if not model:
         # Model setup
-        model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type=activation_type)
+        seed = kwargs.get("seed")
+        model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type)
         model = model.to(device)
-        model.reinitialize(seed=kwargs.get("seed"))
+        model.reinitialize(seed=seed)
 
     activations = {}
     model.set_activations_hook(activations)
@@ -86,7 +87,7 @@ def train_mlp_model(model, X, y, dataloader, input_size, hidden_size, n_hidden, 
     with torch.no_grad():
         y_pred = model(X)
         test_loss = criterion(y_pred, y)
-        print(f'Final Loss: {test_loss.item() / len(dataloader):.4f}\n')
+        print(f'Final Loss: {test_loss.item() / len(dataloader):.4f}')
         data["final predicted y"] = y_pred
 
     return model, data
@@ -214,13 +215,20 @@ class Figures():  # continue working on it
 
 
 def merge_configs(stage_config, config):
-    config["input_size"] = sum(config["features_types"]) + config["odd_dim"]
-    config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if config["optimizer_type"] == "Adam":
-        config["optimizer_type"] = optim.Adam
-    if config["optimizer_type"] == "SGD":
-        config["optimizer_type"] = optim.SGD
     config.update(stage_config)
-    print("merged config: ", config)
+    config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config["input_size"] = sum(config["features_types"]) + config["odd_dim"]
+
+    opt_map = {"Adam": optim.Adam, "SGD": optim.SGD}
+    config["optimizer_type"] = opt_map[config["optimizer_type"]]
+
+    act_map = {
+        "Tanh": nn.Tanh, "RelU": nn.ReLU,
+        "Sigmoid": nn.Sigmoid, "Identity": nn.Identity
+
+    }
+    act_name = config.get("activation_type", "Identity")
+    if isinstance(act_name, str):
+        config["activation_type"] = act_map.get(act_name, nn.Identity)()
 
     return config
