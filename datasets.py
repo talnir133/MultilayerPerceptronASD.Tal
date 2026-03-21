@@ -5,11 +5,8 @@ import torch
 
 def classification_rule(shape_name, n_types, deciding_feature):
     """
-    Determines the label based on a specific feature's value.
-    :param shape_name: Tuple of indices representing the category of each feature.
-    :param n_types: List of integers representing the number of categories per feature.
-    :param deciding_feature: Index of the feature used for classification.
-    :return: 1 if the feature value is below threshold (half of n_types), else 0.
+    Determines the binary label based on whether the specific deciding feature's
+    value is below the halfway threshold of its possible categories.
     """
     types = list(range(n_types[deciding_feature]))
     threshold = len(types) // 2
@@ -19,25 +16,23 @@ def classification_rule(shape_name, n_types, deciding_feature):
         return 0
 
 
-class SummerfieldTask:
+class Dataset:
     """
     Generates synthetic categorical data using One-Hot encoded features.
-    :param features_types: List of integers; each represents the number of types for a feature.
-    :param odd_dim: Dimension of an additional 'odd' feature (used for context/noise).
-    :param sd: Standard deviation for potential noise (default 0).
     """
 
-    def __init__(self, features_types, odd_dim, sd=0):
-        self.n_features = len(features_types) + 1 if odd_dim != 0 else len(features_types)
-        self.n_types = features_types + [odd_dim]
+    def __init__(self, features_types, sd, seed):
+        self.n_features = len(features_types)
+        self.n_types = features_types
         self.sd = sd
-        self.odd_dim = odd_dim
-        self.shapes = None
+        self.seed = seed
         self.names = None
+        self.X = None
+        self.noise = None
 
-    def create_shapes(self):
+    def create_exp_data(self):
         """
-        Creates all possible feature combinations and their corresponding names.
+        Creates all combinations of One-Hot features and pre-calculates the noise tensor.
         """
         features = []
         names = []
@@ -46,27 +41,42 @@ class SummerfieldTask:
             feature_labels = list(range(self.n_types[i]))
             features.append(samples)
             names.append(feature_labels)
-        self.shapes = torch.tensor(np.array([np.concatenate(combo) for combo in itertools.product(*features)])).float()
+
+        self.X = torch.tensor(np.array([np.concatenate(combo) for combo in itertools.product(*features)])).float()
         self.names = torch.tensor(list(itertools.product(*names))).float()
 
-    def get_data(self, deciding_feature=0, odd=False, only_unique=False):
+        self.noise = torch.zeros_like(self.X)
+        if self.sd > 0:
+            torch.manual_seed(self.seed)
+            self.noise = torch.normal(mean=0.0, std=self.sd, size=self.X.shape)
+
+    def get_stage_data_and_labels(self, zero_features, deciding_feature, **kwargs):
         """
-        Generates the final dataset and labels.
-        :param deciding_feature: The feature index used to determine the label.
-        :param odd: Boolean; if False, the 'odd_dim' feature is zeroed out in X.
-        :return: X (features tensor), y (labels tensor).
+        Generates stage-specific data by zeroing selected features, removing duplicates,
+        and applying the pre-calculated noise to the unique samples.
         """
-        self.create_shapes()
+        stage_X = self.X.clone()
+        stage_noise = self.noise.clone()
+
+        start_idx = 0
+        for i, dim in enumerate(self.n_types):
+            if i in zero_features:
+                stage_X[:, start_idx: start_idx + dim] = 0.0
+                stage_noise[:, start_idx: start_idx + dim] = 0.0
+            start_idx += dim
+
         labels = [classification_rule(name, self.n_types, deciding_feature) for name in self.names]
         y = torch.tensor(labels)[:, None].float()
 
-        x = self.shapes.clone()
-        if not odd and self.odd_dim != 0:
-            x[:, -self.odd_dim:] = 0
-            if only_unique:
-                combined = torch.cat((x, y), dim=1)
-                unique_combined = torch.unique(combined, dim=0)
-                x = unique_combined[:, :-1]
-                y = unique_combined[:, -1:]
+        combined = torch.cat((stage_X, y), dim=1).numpy()
+        _, unique_indices = np.unique(combined, axis=0, return_index=True)
+        unique_indices.sort()
 
-        return x, y
+        stage_X = stage_X[unique_indices]
+        y = y[unique_indices]
+        stage_noise = stage_noise[unique_indices]
+
+        if self.sd > 0:
+            stage_X = stage_X + stage_noise
+
+        return stage_X, y

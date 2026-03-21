@@ -20,7 +20,6 @@ class MLP(nn.Module):
             self._layers.add_module(f'fc{i + 2}', nn.Linear(hidden_size, hidden_size, bias=bool(b_scale)))
             self._layers.add_module(f'activation_func{i + 2}', activation_type)
         self._layers.add_module('fc_last', nn.Linear(hidden_size, output_size, bias=bool(b_scale)))
-        # self._layers.add_module('sigmoid', nn.Sigmoid())
         self._handles = []
 
     def set_activations_hook(self, activations):

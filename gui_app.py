@@ -1,19 +1,16 @@
-import sys
-import os
-import ast
-import json
+import sys, os, ast, json
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-                             QPushButton, QSpinBox, QDoubleSpinBox, QComboBox,
-                             QLineEdit, QCheckBox, QGroupBox, QMessageBox, QFileDialog, QScrollArea)
+                             QPushButton, QSpinBox, QDoubleSpinBox, QComboBox, QLabel,
+                             QLineEdit, QGroupBox, QMessageBox, QFileDialog, QScrollArea, QFrame)
 from PyQt5.QtCore import Qt
 
 DEFAULT_CONFIG = {
     "config_name": "config_1",
-    "features_types": [4, 4], "odd_dim": 8, "hidden_size": 30, "n_hidden": 1, "output_size": 1,
-    "b_scale_low": 0.1, "b_scale_high": 2.0, "w_scale_low": 1.0, "w_scale_high": 1.0,
-    "optimizer_type": "Adam", "activation_type": "Tanh", "batch_size": 128,
-    "unique_points_only": False, "seed": 0,
-    "exp_stages": [{"stage_name": "M1", "deciding_feature": 0, "odd": False, "epoches": 100}]
+    "features_types": [4, 4, 8], "hidden_size": 30, "n_hidden": 0, "output_size": 1,
+    "b_scale_low": 0.0, "b_scale_high": 0.0, "w_scale_low": 0.1, "w_scale_high": 50.0,
+    "optimizer_type": "Adam", "activation_type": "Identity", "batch_size": 32,
+    "seed": 0, "sd": 0.0,
+    "exp_stages": [{"stage_name": "M1", "deciding_feature": 0, "zero_features": [2], "epoches": 25}]
 }
 
 
@@ -21,8 +18,8 @@ def get_latest_config():
     os.makedirs("configs", exist_ok=True)
     files = [os.path.join("configs", f) for f in os.listdir("configs") if f.endswith('.json')]
     if files:
-        latest = max(files, key=os.path.getmtime)
         try:
+            latest = max(files, key=os.path.getmtime)
             with open(latest, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
@@ -41,79 +38,82 @@ class ConfigGUI(QWidget):
 
     def init_ui(self):
         main_layout = QHBoxLayout()
-        left_layout = QVBoxLayout()
-        right_layout = QVBoxLayout()
+        left_layout, right_layout = QVBoxLayout(), QVBoxLayout()
 
         self.load_btn = QPushButton("📂 Load Configuration")
-        self.load_btn.setStyleSheet("font-weight: bold; padding: 5px;")
         self.load_btn.clicked.connect(self.load_config)
         left_layout.addWidget(self.load_btn)
 
+        # --- 1. Set Input ---
         group1 = QGroupBox("1. Set Input")
         form1 = QFormLayout()
-        self.add_line_edit(form1, "features_types", str(self.config.get("features_types", [4, 4])))
-        self.add_spinbox(form1, "odd_dim", self.config.get("odd_dim", 8))
-        self.add_spinbox(form1, "batch_size", self.config.get("batch_size", 128), 1024)
+        self.add_line_edit(form1, "features_types", str(self.config.get("features_types", [4, 4, 8])))
+        self.add_double_spinbox(form1, "sd", self.config.get("sd", 0.0))
+        self.add_spinbox(form1, "batch_size", self.config.get("batch_size", 32), 1024)
         self.add_spinbox(form1, "seed", self.config.get("seed", 0))
-        self.add_checkbox(form1, "unique_points_only", self.config.get("unique_points_only", False))
+
+        # תצוגה כללית של ה-Data Shape
+        self.data_shape_label = QLabel("")
+        self.data_shape_label.setStyleSheet("color: black; font-weight: bold; margin-top: 5px;")
+        form1.addRow("", self.data_shape_label)
+
         group1.setLayout(form1)
         left_layout.addWidget(group1)
 
+        # --- 2. Set Network ---
         group2 = QGroupBox("2. Set Network")
         form2 = QFormLayout()
-        self.add_spinbox(form2, "hidden_size", self.config.get("hidden_size", 30))
-        self.add_spinbox(form2, "n_hidden", self.config.get("n_hidden", 1))
-        self.add_spinbox(form2, "output_size", self.config.get("output_size", 1))
-        self.add_double_spinbox(form2, "b_scale_low", self.config.get("b_scale_low", 0.1))
-        self.add_double_spinbox(form2, "b_scale_high", self.config.get("b_scale_high", 2.0))
-        self.add_double_spinbox(form2, "w_scale_low", self.config.get("w_scale_low", 1.0))
-        self.add_double_spinbox(form2, "w_scale_high", self.config.get("w_scale_high", 1.0))
+        for k in ["hidden_size", "n_hidden", "output_size"]: self.add_spinbox(form2, k, self.config.get(k, 0))
+        for k in ["b_scale_low", "b_scale_high", "w_scale_low", "w_scale_high"]: self.add_double_spinbox(form2, k,
+                                                                                                         self.config.get(
+                                                                                                             k, 0.0))
         self.add_combobox(form2, "optimizer_type", ["Adam", "SGD"], self.config.get("optimizer_type", "Adam"))
         self.add_combobox(form2, "activation_type", ["Tanh", "RelU", "Sigmoid", "Identity"],
-                          self.config.get("activation_type", "Tanh"))
+                          self.config.get("activation_type", "Identity"))
         group2.setLayout(form2)
         left_layout.addWidget(group2)
 
+        # --- 3. Experiment Stages ---
         group3 = QGroupBox("3. Experiment Stages")
-        group3_layout = QVBoxLayout()
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        self.stages_container = QWidget()
-        self.stages_layout = QVBoxLayout(self.stages_container)
-        self.stages_layout.setAlignment(Qt.AlignTop)
-        scroll.setWidget(self.stages_container)
-        group3_layout.addWidget(scroll)
-
-        self.add_stage_btn = QPushButton("➕ Add Stage")
-        self.add_stage_btn.clicked.connect(lambda: self.add_stage_row({}))
-        group3_layout.addWidget(self.add_stage_btn)
-        group3.setLayout(group3_layout)
+        gl = QVBoxLayout()
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        self.sw = QWidget()
+        self.sl = QVBoxLayout(self.sw)
+        self.sl.setAlignment(Qt.AlignTop)
+        sc.setWidget(self.sw)
+        gl.addWidget(sc)
+        btn = QPushButton("➕ Add Stage")
+        btn.clicked.connect(lambda: self.add_stage_row({}))
+        gl.addWidget(btn)
+        group3.setLayout(gl)
         right_layout.addWidget(group3)
 
+        # --- 4. Save & Run ---
         group4 = QGroupBox("4. Save & Run")
-        form4 = QFormLayout()
-        self.add_line_edit(form4, "config_name", self.config.get("config_name", "config_1"))
+        f4 = QFormLayout()
+        self.add_line_edit(f4, "config_name", self.config.get("config_name", "config_1"))
         self.run_btn = QPushButton("💾 Save & Run Simulation")
         self.run_btn.setStyleSheet("font-weight: bold; padding: 10px; background-color: #0078D7; color: white;")
         self.run_btn.clicked.connect(self.on_run)
-        form4.addRow(self.run_btn)
-        group4.setLayout(form4)
+        f4.addRow(self.run_btn)
+        group4.setLayout(f4)
         right_layout.addWidget(group4)
 
-        main_layout.addLayout(left_layout, stretch=1)
-        main_layout.addLayout(right_layout, stretch=2)
-
+        main_layout.addLayout(left_layout, 1)
+        main_layout.addLayout(right_layout, 2)
         self.setLayout(main_layout)
-        self.setWindowTitle("Simulation Configuration Manager")
-        self.resize(850, 600)
+        self.setWindowTitle("Simulation Manager")
+        self.resize(900, 650)
+
+        # חיבור עדכונים בזמן אמת ל-Shapes
+        self.inputs["features_types"].textChanged.connect(self.update_all_shapes)
         self.populate_stages()
 
-    def add_spinbox(self, l, n, v, mx=1000, s=1):
+    def add_spinbox(self, l, n, v, mx=1000):
         w = QSpinBox();
         w.setRange(0, mx);
-        w.setSingleStep(s);
-        w.setValue(v)
+        w.setValue(v);
         self.inputs[n] = w;
         l.addRow(n, w)
 
@@ -121,14 +121,14 @@ class ConfigGUI(QWidget):
         w = QDoubleSpinBox();
         w.setRange(0.0, 100.0);
         w.setSingleStep(0.1);
-        w.setValue(v)
+        w.setValue(v);
         self.inputs[n] = w;
         l.addRow(n, w)
 
     def add_combobox(self, l, n, o, d):
         w = QComboBox();
         w.addItems(o);
-        w.setCurrentText(d)
+        w.setCurrentText(d);
         self.inputs[n] = w;
         l.addRow(n, w)
 
@@ -137,141 +137,151 @@ class ConfigGUI(QWidget):
         self.inputs[n] = w;
         l.addRow(n, w)
 
-    def add_checkbox(self, l, n, c):
-        w = QCheckBox();
-        w.setChecked(c);
-        self.inputs[n] = w;
-        l.addRow(n, w)
-
     def populate_stages(self):
-        for w in self.stage_widgets:
-            w["row"].deleteLater()
+        for w in self.stage_widgets: w["row"].deleteLater()
         self.stage_widgets.clear()
-        for stage in self.config.get("exp_stages", []):
-            self.add_stage_row(stage)
+        for s in self.config.get("exp_stages", []): self.add_stage_row(s)
+        self.update_all_shapes()
 
     def add_stage_row(self, data):
-        if len(self.stage_widgets) >= 10:
-            QMessageBox.warning(self, "Limit", "Maximum of 10 stages allowed.")
-            return
+        # יצירת מסגרת יפה לכל Stage
+        row = QFrame()
+        row.setStyleSheet("QFrame { background-color: #f4f6f9; border-radius: 5px; margin-bottom: 2px; }")
+        ly = QVBoxLayout(row)
+        ly.setContentsMargins(10, 10, 10, 10)
 
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
+        row_top = QHBoxLayout()
+        name = QLineEdit(data.get("stage_name", f"S{len(self.stage_widgets) + 1}"))
+        name.setFixedWidth(80)
+        ep = QSpinBox();
+        ep.setRange(1, 10000);
+        ep.setValue(data.get("epoches", 25));
+        ep.setPrefix("Ep: ")
+        df = QSpinBox();
+        df.setRange(0, 10);
+        df.setValue(data.get("deciding_feature", 0));
+        df.setPrefix("Feat: ")
 
-        name_w = QLineEdit(data.get("stage_name", f"Stage_{len(self.stage_widgets) + 1}"))
-        name_w.setPlaceholderText("Name")
+        zf_val = data.get("zero_features", [])
+        zf_str = ",".join(map(str, zf_val)) if isinstance(zf_val, (list, tuple)) else str(zf_val)
+        zf = QLineEdit(zf_str);
+        zf.setPlaceholderText("Zero Feats (e.g. 2)")
 
-        ep_w = QSpinBox()
-        ep_w.setRange(1, 10000)
-        ep_w.setValue(data.get("epoches", 100))
-        ep_w.setPrefix("Ep: ")
+        dl = QPushButton("❌");
+        dl.setFixedWidth(30)
+        dl.setStyleSheet("background-color: transparent;")
 
-        df_w = QSpinBox()
-        df_w.setRange(0, 10)
-        df_w.setValue(data.get("deciding_feature", 0))
-        df_w.setPrefix("Feat: ")
+        for w in [name, ep, df, zf, dl]: row_top.addWidget(w)
 
-        odd_w = QCheckBox("Odd")
-        odd_w.setChecked(data.get("odd", False))
+        # תווית נתונים לסטייג' הספציפי
+        shape_lbl = QLabel("")
+        shape_lbl.setStyleSheet("color: #555; font-size: 11px; font-weight: bold; margin-top: 3px;")
 
-        del_btn = QPushButton("❌")
-        del_btn.setFixedWidth(30)
+        ly.addLayout(row_top)
+        ly.addWidget(shape_lbl)
 
-        layout.addWidget(name_w, stretch=2)
-        layout.addWidget(ep_w, stretch=1)
-        layout.addWidget(df_w, stretch=1)
-        layout.addWidget(odd_w)
-        layout.addWidget(del_btn)
+        d = {"row": row, "name": name, "ep": ep, "df": df, "zf": zf, "shape_lbl": shape_lbl}
+        self.stage_widgets.append(d)
+        self.sl.addWidget(row)
 
-        stage_dict = {"row": row, "name": name_w, "ep": ep_w, "df": df_w, "odd": odd_w}
-        self.stage_widgets.append(stage_dict)
-        self.stages_layout.addWidget(row)
+        dl.clicked.connect(lambda: self.remove_stage(row, d))
 
-        del_btn.clicked.connect(lambda _, r=row, d=stage_dict: self.remove_stage(r, d))
+        # עדכון השייפים בלייב כשמשנים פרמטרים
+        name.textChanged.connect(self.update_all_shapes)
+        zf.textChanged.connect(self.update_all_shapes)
+        self.update_all_shapes()
 
-    def remove_stage(self, row_widget, stage_dict):
-        self.stages_layout.removeWidget(row_widget)
-        row_widget.deleteLater()
-        if stage_dict in self.stage_widgets:
-            self.stage_widgets.remove(stage_dict)
+    def remove_stage(self, r, d):
+        self.sl.removeWidget(r);
+        r.deleteLater()
+        if d in self.stage_widgets: self.stage_widgets.remove(d)
+        self.update_all_shapes()
+
+    def parse_zf(self, text):
+        res = []
+        for x in text.replace('(', '').replace(')', '').split(","):
+            if x.strip().isdigit(): res.append(int(x.strip()))
+        return res
+
+    def update_all_shapes(self):
+        try:
+            ft = ast.literal_eval(self.inputs["features_types"].text())
+            if not isinstance(ft, list): raise ValueError
+
+            p_base, s_base = 1, sum(ft)
+            for d in ft: p_base *= d
+            self.data_shape_label.setText(f"Exp Base Data Shape: ({p_base}, {s_base})")
+
+            for w in self.stage_widgets:
+                name = w["name"].text()
+                zf_list = self.parse_zf(w["zf"].text())
+
+                p_stage = 1
+                for i, dim in enumerate(ft):
+                    if i not in zf_list:
+                        p_stage *= dim
+
+                w["shape_lbl"].setText(f"Data shape for '{name}' stage: ({p_stage}, {s_base})")
+        except:
+            self.data_shape_label.setText("Exp Base Data Shape: (Invalid)")
+            for w in self.stage_widgets:
+                w["shape_lbl"].setText("Data shape: (Invalid)")
 
     def load_config(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration", "configs", "JSON Files (*.json)")
-        if file_path:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    self.config = json.load(f)
-                for key, widget in self.inputs.items():
-                    if key not in self.config: continue
-                    val = self.config[key]
-                    if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-                        widget.setValue(val)
-                    elif isinstance(widget, QComboBox):
-                        widget.setCurrentText(val)
-                    elif isinstance(widget, QCheckBox):
-                        widget.setChecked(val)
-                    elif isinstance(widget, QLineEdit):
-                        widget.setText(str(val))
-                self.populate_stages()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load file:\n{e}")
+        p, _ = QFileDialog.getOpenFileName(self, "Load", "configs", "*.json")
+        if p:
+            with open(p, 'r') as f:
+                self.config = json.load(f)
+            for k, w in self.inputs.items():
+                if k in self.config:
+                    v = self.config[k]
+                    if isinstance(w, (QSpinBox, QDoubleSpinBox)):
+                        w.setValue(v)
+                    elif isinstance(w, QComboBox):
+                        w.setCurrentText(str(v))
+                    elif isinstance(w, QLineEdit):
+                        w.setText(str(v))
+            self.populate_stages()
 
     def on_run(self):
-        for key, widget in self.inputs.items():
-            if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-                self.config[key] = widget.value()
-            elif isinstance(widget, QComboBox):
-                self.config[key] = widget.currentText()
-            elif isinstance(widget, QCheckBox):
-                self.config[key] = widget.isChecked()
-            elif isinstance(widget, QLineEdit):
-                val = widget.text()
-                if key == "features_types":
+        for k, w in self.inputs.items():
+            if isinstance(w, (QSpinBox, QDoubleSpinBox)):
+                self.config[k] = w.value()
+            elif isinstance(w, QComboBox):
+                self.config[k] = w.currentText()
+            elif isinstance(w, QLineEdit):
+                if k == "features_types":
                     try:
-                        self.config[key] = ast.literal_eval(val)
+                        self.config[k] = ast.literal_eval(w.text())
                     except:
-                        self.config[key] = [4, 4]
+                        pass
                 else:
-                    self.config[key] = val
+                    self.config[k] = w.text()
 
-        stages_data = []
-        for w in self.stage_widgets:
-            stages_data.append({
-                "stage_name": w["name"].text(),
-                "deciding_feature": w["df"].value(),
-                "odd": w["odd"].isChecked(),
-                "epoches": w["ep"].value()
-            })
+        self.config["exp_stages"] = [{"stage_name": w["name"].text(), "deciding_feature": w["df"].value(),
+                                      "zero_features": self.parse_zf(w["zf"].text()), "epoches": w["ep"].value()} for w
+                                     in
+                                     self.stage_widgets]
 
-        if not stages_data:
-            QMessageBox.warning(self, "Warning", "You must have at least one stage.")
-            return
-
-        self.config["exp_stages"] = stages_data
-
-        config_path = f"configs/{self.config['config_name']}.json"
-        try:
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=4)
-        except Exception as e:
-            QMessageBox.warning(self, "Warning", f"Could not save JSON file:\n{e}")
+        with open(f"configs/{self.config['config_name']}.json", 'w') as f:
+            json.dump(self.config, f, indent=4)
 
         self.run_btn.setEnabled(False)
         self.run_btn.setText("Running...")
         QApplication.processEvents()
+
         try:
             self.run_callback(self.config)
-            QMessageBox.information(self, "Success", "Simulation finished and saved!")
+            QMessageBox.information(self, "Success", "Simulation finished and saved")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed:\n{e}")
+            QMessageBox.critical(self, "Error", str(e))
         finally:
             self.run_btn.setEnabled(True)
             self.run_btn.setText("💾 Save & Run Simulation")
 
 
-def launch_gui(run_callback):
+def launch_gui(cb):
     app = QApplication.instance() or QApplication(sys.argv)
-    gui = ConfigGUI(run_callback)
-    gui.show()
+    g = ConfigGUI(cb)
+    g.show()
     app.exec_()
