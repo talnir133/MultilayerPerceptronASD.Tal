@@ -50,33 +50,33 @@ class Dataset:
             torch.manual_seed(self.seed)
             self.noise = torch.normal(mean=0.0, std=self.sd, size=self.X.shape)
 
-    def get_stage_data_and_labels(self, zero_features, deciding_feature, **kwargs):
+    def get_block_data_and_labels(self, zero_features, deciding_feature, **kwargs):
         """
-        Generates stage-specific data by zeroing selected features, removing duplicates,
+        Generates block-specific data by zeroing selected features, removing duplicates,
         and applying the pre-calculated noise to the unique samples.
         """
-        stage_X = self.X.clone()
-        stage_noise = self.noise.clone()
+        block_X = self.X.clone()
+        block_noise = self.noise.clone()
 
         start_idx = 0
         for i, dim in enumerate(self.n_types):
             if i in zero_features:
-                stage_X[:, start_idx: start_idx + dim] = 0.0
-                stage_noise[:, start_idx: start_idx + dim] = 0.0
+                block_X[:, start_idx: start_idx + dim] = 0.0
+                block_noise[:, start_idx: start_idx + dim] = 0.0
             start_idx += dim
 
         labels = [classification_rule(name, self.n_types, deciding_feature) for name in self.names]
         y = torch.tensor(labels)[:, None].float()
 
-        combined = torch.cat((stage_X, y), dim=1).numpy()
+        combined = torch.cat((block_X, y), dim=1).numpy()
         _, unique_indices = np.unique(combined, axis=0, return_index=True)
         unique_indices.sort()
 
-        stage_X = stage_X[unique_indices]
+        block_X = block_X[unique_indices]
         y = y[unique_indices]
-        stage_noise = stage_noise[unique_indices]
+        block_noise = block_noise[unique_indices]
 
         if self.sd > 0:
-            stage_X = stage_X + stage_noise
+            block_X = block_X + block_noise
 
-        return stage_X, y
+        return block_X, y

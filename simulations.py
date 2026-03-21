@@ -2,30 +2,28 @@ from utils import *
 import json
 from gui_app import launch_gui
 
-FIGURES_CONFIG = ["accuracy_graph"]
-
 
 def run_experiment(config):
     exps_results = []
-    if len(config["exp_stages"]) == 0:
-        raise ValueError("Experiment stages list is empty. Please provide at least one stage in the configuration.")
+    if len(config["exp_blocks"]) == 0:
+        raise ValueError("Experiment blocks list is empty. Please provide at least one block in the configuration.")
 
     dataset = Dataset(config["features_types"], config["sd"], config["seed"])
     dataset.create_exp_data()
 
     models = (None, None)
-    for stage_config in config["exp_stages"]:
-        stage_results = run_stage(dataset, models, stage_config, config)
-        models = (stage_results["model_low"], stage_results["model_high"])
-        exps_results.append([stage_config["stage_name"], stage_results])
+    for block_config in config["exp_blocks"]:
+        block_results = run_block(dataset, models, block_config, config)
+        models = (block_results["model_low"], block_results["model_high"])
+        exps_results.append([block_config["block_name"], block_results])
     return exps_results
 
 
-def run_stage(dataset, models, stage_config, global_config):
-    print(f"\n--- Running Stage: {stage_config['stage_name']} ---")
+def run_block(dataset, models, block_config, global_config):
+    print(f"\n--- Running Block: {block_config['block_name']} ---")
     current_cfg = copy.deepcopy(global_config)
-    current_cfg = merge_configs(stage_config, current_cfg)
-    X, y = dataset.get_stage_data_and_labels(**current_cfg)
+    current_cfg = merge_configs(block_config, current_cfg)
+    X, y = dataset.get_block_data_and_labels(**current_cfg)
     print(f"Data shape: {X.shape}, Labels shape: {y.shape}")
 
     model_low, data_low = train_mlp_model(
@@ -89,7 +87,7 @@ def run_simulation_from_dictionary(config, figures_config):
 
 
 CONFIG = {
-    "exp_name": "config_1",
+    "exp_name": "test",
     "features_types": [4, 4, 8],
     "hidden_size": 30,
     "n_hidden": 0,
@@ -103,16 +101,18 @@ CONFIG = {
     "batch_size": 1,
     "seed": 0,
     "sd": 0,
-    "exp_stages": [{"stage_name": "M1", "deciding_feature": 0, "zero_features": (2,), "epoches": 25},
-                   {"stage_name": "M1-Flex", "deciding_feature": 1, "zero_features": (2,), "epoches": 25}]
+    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": (2,), "epoches": 25},
+                   {"block_name": "M1-Flex", "deciding_feature": 1, "zero_features": (2,), "epoches": 25}]
 }
+
+FIGURES_CONFIG = ["accuracy_graph"]
 
 if __name__ == '__main__':
     # OPTION A: Launch the GUI
     run_simulation_from_gui(FIGURES_CONFIG)
 
     # OPTION B: Bypass GUI and run from a specific JSON file
-    # run_simulation_from_config_file("test_config_gui", FIGURES_CONFIG)
+    # run_simulation_from_config_file("test", FIGURES_CONFIG)
 
     # OPTION C: Bypass GUI and run from a provided configuration dictionary
     # run_simulation_from_dictionary(CONFIG, FIGURES_CONFIG)

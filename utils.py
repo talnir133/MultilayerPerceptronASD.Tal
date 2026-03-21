@@ -15,8 +15,8 @@ from datasets import Dataset
 from models import MLP
 
 
-def merge_configs(stage_config, config):
-    config.update(stage_config)
+def merge_configs(block_config, config):
+    config.update(block_config)
     config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config["input_size"] = sum(config["features_types"])
 
@@ -122,13 +122,13 @@ class Figures():
     def graph_temp1(self, y, y_axis_name, log=False):
         cfg = self.config
         exp_name = cfg.get("exp_name", "Experiment").capitalize()
-        low, high, boundaries, stage_names = [], [], [0], []
+        low, high, boundaries, block_names = [], [], [0], []
 
         for step_name, step_results in self.results:
             low += step_results["data_low"][y]
             high += step_results["data_high"][y]
             boundaries.append(len(low))
-            stage_names.append(step_name)
+            block_names.append(step_name)
 
         plt.figure(figsize=(14, 6))
         plt.subplots_adjust(right=0.65, bottom=0.15)
@@ -141,12 +141,12 @@ class Figures():
         for i in range(1, len(boundaries) - 1):
             line = boundaries[i]
             plt.axvline(x=line, color='gray', linestyle='--', linewidth=1)
-            plt.text(line - x_offset, sum(plt.ylim()) / 2, 'Stage Shift', color='gray', fontsize=9,
+            plt.text(line - x_offset, sum(plt.ylim()) / 2, 'Block Shift', color='gray', fontsize=9,
                      rotation=90, va='center', ha='right')
 
-        for i in range(len(stage_names)):
+        for i in range(len(block_names)):
             start, end = boundaries[i], boundaries[i + 1]
-            ax.text((start + end) / 2, -0.06, stage_names[i], transform=ax.get_xaxis_transform(),
+            ax.text((start + end) / 2, -0.06, block_names[i], transform=ax.get_xaxis_transform(),
                     ha='center', va='top', fontsize=10, fontweight='bold', color='darkblue')
 
         config_text = r"$\mathbf{Simulation's\ Configurations:}$" + "\n\n"
@@ -164,11 +164,11 @@ class Figures():
                 config_text += f"   {k}: {val}\n"
             config_text += "\n"
 
-        config_text += "Experiment Stages:\n"
-        for idx, stage in enumerate(cfg.get('exp_stages', []), 1):
-            name, eps, feat = stage.get('stage_name', 'Unnamed'), stage.get('epoches', 0), stage.get('deciding_feature',
+        config_text += "Experiment Blocks:\n"
+        for idx, block in enumerate(cfg.get('exp_blocks', []), 1):
+            name, eps, feat = block.get('block_name', 'Unnamed'), block.get('epoches', 0), block.get('deciding_feature',
                                                                                                      0)
-            zf = stage.get('zero_features', [])
+            zf = block.get('zero_features', [])
             zf_str = "None" if not zf else (",".join(map(str, zf)) if isinstance(zf, (list, tuple)) else str(zf))
             config_text += f"   {idx}. {name}, epochs: {eps}, deciding_feature: {feat}, zero_features: {zf_str}\n"
 
@@ -186,7 +186,11 @@ class Figures():
         plt.grid(True, which="both", ls="-", alpha=0.5)
 
         if self.save:
-            plt.savefig(f"{self.path}/{y}_comparison_{exp_name.replace(' ', '_')}.png", bbox_inches='tight', dpi=300)
+            base = f"{self.path}/{y}_figure_{exp_name.replace(' ', '_')}"
+            path, i = f"{base}.png", 1
+            while os.path.exists(path):
+                path, i = f"{base}_{i}.png", i + 1
+            plt.savefig(path, bbox_inches='tight', dpi=300)
 
         plt.show()
 
