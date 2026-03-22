@@ -44,9 +44,7 @@ class MLP(nn.Module):
     def forward(self, x):
         return self._layers(x)
 
-    def reinitialize(self, seed=None):
-        if seed is not None:
-            torch.manual_seed(seed)
+    def reinitialize(self):
         for name, m in self.named_modules():
             if isinstance(m, nn.Linear):
                 if bool(self.b_scale):

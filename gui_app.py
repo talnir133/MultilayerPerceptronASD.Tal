@@ -10,7 +10,7 @@ DEFAULT_CONFIG = {
     "b_scale_low": 0.0, "b_scale_high": 0.0, "w_scale_low": 0.1, "w_scale_high": 50.0,
     "optimizer_type": "Adam", "activation_type": "Identity", "batch_size": 32,
     "seed": 0, "sd": 0.0,
-    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": [2], "epoches": 25}]
+    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": [2], "epochs": 25}]
 }
 
 
@@ -152,7 +152,7 @@ class ConfigGUI(QWidget):
         name.setFixedWidth(80)
         ep = QSpinBox();
         ep.setRange(1, 10000);
-        ep.setValue(data.get("epoches", 25));
+        ep.setValue(data.get("epochs", 25));
         ep.setPrefix("Ep: ")
         df = QSpinBox();
         df.setRange(0, 10);
@@ -256,7 +256,7 @@ class ConfigGUI(QWidget):
                     self.config[k] = w.text()
 
         self.config["exp_blocks"] = [{"block_name": w["name"].text(), "deciding_feature": w["df"].value(),
-                                      "zero_features": self.parse_zf(w["zf"].text()), "epoches": w["ep"].value()} for w
+                                      "zero_features": self.parse_zf(w["zf"].text()), "epochs": w["ep"].value()} for w
                                      in self.block_widgets]
 
         with open(f"configs/{self.config['exp_name']}.json", 'w') as f:

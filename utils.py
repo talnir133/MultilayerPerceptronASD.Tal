@@ -35,66 +35,120 @@ def merge_configs(block_config, config):
     return config
 
 
-def train_mlp_model(model, X, y, input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
-                    optimizer_type, activation_type, batch_size, seed, **kwargs):
-    """
-    Initializes and trains an MLP model, capturing activation distances and loss history.
 
-    :param model: MLP model
-    :param input_size: Integer, number of input features (total dimension of concatenated one-hots).
-    :param hidden_size: Integer, number of neurons in each hidden layer.
-    :param n_hidden: Integer, number of hidden layers (excluding input and output).
-    :param output_size: Integer, dimension of the output layer (usually 1 for binary classification).
-    :param w_scale: List of 2 floats, standard deviation used for normal initialization of weights (low and high).
-    :param b_scale: Float, standard deviation used for normal initialization of biases.
-    :param X: Tensor, the full feature set used for evaluation and distance calculation.
-    :param y: Tensor, the full label set used for final loss evaluation.
-    :param optimizer_type: The PyTorch optimizer class to use (e.g., optim.Adam or optim.SGD).
-    :param activation_type: String, the type of activation function for hidden layers ('RelU', 'Sigmoid', 'Tanh', etc.).
+def get_bayes_optimal_probabilities(noisy_X, sd, features_types, deciding_feature, **kwargs):
+
+    start_idx = sum(features_types[:deciding_feature])
+    n_types = features_types[deciding_feature]
+    end_idx = start_idx + n_types
+
+    noisy_deciding_feature = noisy_X[:, start_idx:end_idx]
+
+    if sd == 0.0:
+        best_match = torch.argmax(noisy_deciding_feature, dim=1)
+        threshold = n_types // 2
+        optimal_probs = (best_match < threshold).float().unsqueeze(1)
+        return optimal_probs
+
+    templates = torch.eye(n_types, device=noisy_X.device)
+    dists = torch.cdist(noisy_deciding_feature, templates) ** 2
+    likelihoods = torch.exp(-dists / (2 * (sd ** 2)))
+
+    threshold = n_types // 2
+    L_class1 = torch.sum(likelihoods[:, :threshold], dim=1)
+    L_class0 = torch.sum(likelihoods[:, threshold:], dim=1)
+
+    optimal_probs = L_class1 / (L_class1 + L_class0)
+
+    return optimal_probs.unsqueeze(1)
+
+
+def train_mlp_model(model, optimizer, X, y, input_size, hidden_size, n_hidden, output_size, w_scale, b_scale,
+                    optimizer_type, activation_type, batch_size, seed, sd, epochs, **current_block_config):
     """
-    # Move data to device
+    Initializes and trains an MLP model.
+    Tracks clean loss/accuracy, activation distances, raw activations, and robustness against noise.
+    """
+    # ==========================================
+    # 1. Setup & Preparations
+    # ==========================================
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     X = X.to(device)
     y = y.to(device)
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    dataset = TensorDataset(X, y)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-    # Measurement:
-    data = {"losses": [], "accuracies": [], "X": X, "y": y}
-
     if not model:
-        # Model setup
         model = MLP(input_size, hidden_size, n_hidden, output_size, w_scale, b_scale, activation_type)
         model = model.to(device)
-        model.reinitialize(seed=seed)
+        model.reinitialize()
+        optimizer = optimizer_type(model.parameters(), lr=0.004)
 
-    activations = {}
-    model.set_activations_hook(activations)
-    criterion = nn.BCEWithLogitsLoss()  # removed sigmoid - Should be fixed for Oded's experiment
-    optimizer = optimizer_type(model.parameters(), lr=0.004)
+    criterion = nn.BCEWithLogitsLoss()
 
-    # Saving distances data before training
-    model.eval()
-    data["input distances"] = pairwise_distances(X.cpu().detach().numpy())[np.triu_indices(X.shape[0])]
-    with torch.no_grad():
-        model(X)  # filling "activations" with data
-        data["initial activations distances"] = {k: pairwise_distances(v)[np.triu_indices(X.shape[0])] for k, v in
-                                                 activations.items()}
-    model.remove_activations_hook()
+    # ==========================================
+    # 2. Data Tracking
+    # ==========================================
+    data = {
+        "losses": [],
+        "accuracies": [],
+        "optimal_accuracies": [],
+        "noised_data": [],
+        "activation_history": [],
+        "activation_distances_history": [],
+        "X": X,
+        "y": y
+    }
 
-    # Training loop
-    model.train()
-    for epoch in tqdm(range(kwargs.get("epoches")), desc="Training"):
+    #  creating a mask to apply noise only to non-zeroed features
+    noise_mask = torch.ones_like(X)
+    zero_feats = current_block_config.get("zero_features", [])
+    features_types = current_block_config.get("features_types", [])
 
+    start_idx = 0
+    for i, dim in enumerate(features_types):
+        if i in zero_feats:
+            noise_mask[:, start_idx: start_idx + dim] = 0.0
+        start_idx += dim
+
+    # ==========================================
+    # 3. Training Loop
+    # ==========================================
+    for epoch in tqdm(range(epochs), desc="Training"):
+
+        # --- Noise Generation ---
+        noise = torch.randn_like(X) * sd * noise_mask
+        current_X = X + noise
+        data["noised_data"].append(current_X.cpu().detach().numpy())
+
+        # --- evaluation ---
         model.eval()
+        activations = {}
+        model.set_activations_hook(activations)
+
         with torch.no_grad():
-            preds = model(X)
-            data["losses"].append(criterion(preds, y).item())
-            data["accuracies"].append(1 - torch.abs(torch.sigmoid(preds) - y).mean().item())
+            clean_preds = model(X)
+            data["losses"].append(criterion(clean_preds, y).item())
+            data["accuracies"].append(1 - torch.abs(torch.sigmoid(clean_preds) - y).mean().item())
+
+            epoch_act_dist = {}
+            epoch_raw_act = {}
+            for layer_name, layer_activations in activations.items():
+                layer_np = layer_activations
+                epoch_raw_act[layer_name] = layer_np
+                distances = pairwise_distances(layer_np)[np.triu_indices(X.shape[0], k=1)]
+                epoch_act_dist[layer_name] = distances
+            data["activation_history"].append(epoch_raw_act)
+            data["activation_distances_history"].append(epoch_act_dist)
+            model.remove_activations_hook()
+
+            optimal_probs = get_bayes_optimal_probabilities(current_X, sd, **current_block_config)
+            noisy_logits = model(current_X)
+            model_probs = torch.sigmoid(noisy_logits)
+            data["optimal_accuracies"].append(1-torch.abs(model_probs - optimal_probs).mean().item())
+
+        # --- Training Step ---
         model.train()
+        dataset = TensorDataset(current_X, y)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
@@ -103,15 +157,17 @@ def train_mlp_model(model, X, y, input_size, hidden_size, n_hidden, output_size,
             loss.backward()
             optimizer.step()
 
-    # Final evaluation
+    # ==========================================
+    # 4. Finalization
+    # ==========================================
     model.eval()
     with torch.no_grad():
         y_pred = model(X)
         test_loss = criterion(y_pred, y)
-        print(f'Final Loss: {test_loss.item() / len(dataloader):.4f}')
-        data["final predicted y"] = y_pred
+        print(f'Final Loss: {test_loss.item():.4f}')
+        data["final predicted y"] = y_pred.cpu().numpy()
 
-    return model, data
+    return model, optimizer, data
 
 
 class Figures():
@@ -124,11 +180,11 @@ class Figures():
         exp_name = cfg.get("exp_name", "Experiment").capitalize()
         low, high, boundaries, block_names = [], [], [0], []
 
-        for step_name, step_results in self.results:
-            low += step_results["data_low"][y]
-            high += step_results["data_high"][y]
+        for block_name, block_results in self.results:
+            low += block_results["data_low"][y]
+            high += block_results["data_high"][y]
             boundaries.append(len(low))
-            block_names.append(step_name)
+            block_names.append(block_name)
 
         plt.figure(figsize=(14, 6))
         plt.subplots_adjust(right=0.65, bottom=0.15)
@@ -166,7 +222,7 @@ class Figures():
 
         config_text += "Experiment Blocks:\n"
         for idx, block in enumerate(cfg.get('exp_blocks', []), 1):
-            name, eps, feat = block.get('block_name', 'Unnamed'), block.get('epoches', 0), block.get('deciding_feature',
+            name, eps, feat = block.get('block_name', 'Unnamed'), block.get('epochs', 0), block.get('deciding_feature',
                                                                                                      0)
             zf = block.get('zero_features', [])
             zf_str = "None" if not zf else (",".join(map(str, zf)) if isinstance(zf, (list, tuple)) else str(zf))
