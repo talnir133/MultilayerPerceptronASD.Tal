@@ -68,9 +68,9 @@ def create_figures(exp_results, config, figures_config, save=True):
         with open(path + "/config.json", "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
     fig = Figures(exp_results, config, save)
-    for method_name in figures_config:
+    for method_name, kwargs in figures_config:
         plot_method = getattr(fig, method_name)
-        plot_method()
+        plot_method(**kwargs)
 
 
 def run_simulation_from_gui(figures_config):
@@ -99,8 +99,8 @@ def run_simulation_from_dictionary(config, figures_config):
 
 
 CONFIG = {
-    "exp_name": "test",
-    "features_types": [4, 4],
+    "exp_name": "test1",
+    "features_types": [4, 4, 8],
     "hidden_size": 30,
     "n_hidden": 0,
     "output_size": 1,
@@ -112,30 +112,12 @@ CONFIG = {
     "activation_type": "Identity",
     "batch_size": 1,
     "seed": 0,
-    "sd": 0.5,
-    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": (), "epochs": 25},
-                   {"block_name": "M1", "deciding_feature": 0, "zero_features": (), "epochs": 25}]
+    "sd": 1,
+    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": (2,), "epochs": 25}]
 }
 
-CONFIG_2 = {
-    "exp_name": "test",
-    "features_types": [4, 4],
-    "hidden_size": 30,
-    "n_hidden": 0,
-    "output_size": 1,
-    "b_scale_low": 0,
-    "b_scale_high": 0,
-    "w_scale_low": 0.1,
-    "w_scale_high": 50,
-    "optimizer_type": "Adam",
-    "activation_type": "Identity",
-    "batch_size": 1,
-    "seed": 0,
-    "sd": 0.5,
-    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": (), "epochs": 50}]
-}
-
-FIGURES_CONFIG = ["accuracy_graph"]
+FIGURES_CONFIG = [("mds_graph", {"epoch": -1, "layer_name": "fc1", "model_type": "low"}),
+                    ("MAE_graph", {"sub_type": "noisy"})]
 
 if __name__ == '__main__':
     # OPTION A: Launch the GUI
@@ -145,4 +127,4 @@ if __name__ == '__main__':
     # run_simulation_from_config_file("test", FIGURES_CONFIG)
 
     # OPTION C: Bypass GUI and run from a provided configuration dictionary
-    run_simulation_from_dictionary(CONFIG_2, FIGURES_CONFIG)
+    run_simulation_from_dictionary(CONFIG, FIGURES_CONFIG)
