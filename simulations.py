@@ -1,6 +1,10 @@
+import matplotlib.pyplot as plt
+
 from utils import *
 import json
 from gui_app import launch_gui
+from datasets import Dataset
+import copy
 
 
 def run_experiment(config):
@@ -24,7 +28,6 @@ def run_experiment(config):
 
 
 def run_block(dataset, models, optimizers, block_config, global_config):
-
     print(f"\n--- Running Block: {block_config['block_name']} ---")
     current_cfg = copy.deepcopy(global_config)
     current_cfg = merge_configs(block_config, current_cfg)
@@ -100,7 +103,7 @@ def run_simulation_from_dictionary(config, figures_config):
 
 CONFIG = {
     "exp_name": "test1",
-    "features_types": [4, 4, 8],
+    "features_types": [2],
     "hidden_size": 30,
     "n_hidden": 0,
     "output_size": 1,
@@ -112,19 +115,31 @@ CONFIG = {
     "activation_type": "Identity",
     "batch_size": 1,
     "seed": 0,
-    "sd": 1,
-    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": (2,), "epochs": 25}]
+    "sd": 0,
+    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": (), "epochs": 20}]
 }
 
-FIGURES_CONFIG = [("mds_graph", {"epoch": -1, "layer_name": "fc1", "model_type": "low"}),
-                    ("MAE_graph", {"sub_type": "noisy"})]
+FIGURES_CONFIG_1 = [("mds_graph", {"epoch": -1, "layer_name": "fc1", "model_type": "low"}),
+                  ("mds_graph", {"epoch": -1, "layer_name": "fc1", "model_type": "high"})]
+
+FIGURES_CONFIG_2 = [("accuracy_graph", {"sub_type": "clean"}), ("MAE_graph", {"sub_type": "clean"}),("parameters_std_graph", {})]
+
+import numpy as np
+
+
 
 if __name__ == '__main__':
-    # OPTION A: Launch the GUI
-    # run_simulation_from_gui(FIGURES_CONFIG)
+    # --- OPTION A: Launch the GUI:
+    # run_simulation_from_gui(FIGURES_CONFIG_2)
 
-    # OPTION B: Bypass GUI and run from a specific JSON file
+    # --- OPTION B: Bypass GUI and run from a specific JSON file:
     # run_simulation_from_config_file("test", FIGURES_CONFIG)
 
-    # OPTION C: Bypass GUI and run from a provided configuration dictionary
-    run_simulation_from_dictionary(CONFIG, FIGURES_CONFIG)
+    # --- OPTION C: Bypass GUI and run from a provided configuration dictionary:
+    # run_simulation_from_dictionary(CONFIG, FIGURES_CONFIG_2)
+
+    # --- IDR check ---
+    idr = IDR_check(w_scale_low=1, w_scale_high=1, b_scale_low=0.1, b_scale_high=5, epochs=500, seed=0, activation_type="Tanh")
+    # idr.plot_sigmoids(23)
+    # idr.plot_histograms(30)
+    run_simulation_from_dictionary(idr.config, FIGURES_CONFIG_2)

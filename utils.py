@@ -7,15 +7,16 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import matplotlib
-import copy
 from scipy.spatial.distance import squareform
 from sklearn.manifold import MDS
 import warnings
+from scipy.optimize import curve_fit
+from scipy.stats import norm
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 matplotlib.use('TkAgg')
 from sklearn.metrics.pairwise import pairwise_distances
-from datasets import Dataset
 from models import MLP
 
 
@@ -102,6 +103,8 @@ def train_mlp_model(model, optimizer, X, y, input_size, hidden_size, n_hidden, o
         "noised_data": [],
         "activations_clean": [],
         "activation_distances_clean": [],
+        "fc1_weight_sd": [],
+        "fc1_bias_sd": [],
         "X": X,
         "y": y
     }
@@ -134,6 +137,11 @@ def train_mlp_model(model, optimizer, X, y, input_size, hidden_size, n_hidden, o
 
         with torch.no_grad():
             clean_preds = model(X)
+            data["fc1_weight_sd"].append(model._layers.fc1.weight.std().item())
+            if model._layers.fc1.bias is not None:
+                data["fc1_bias_sd"].append(model._layers.fc1.bias.std().item())
+            else:
+                data["fc1_bias_sd"].append(0.0)
             data["losses_clean"].append(criterion(clean_preds, y).item())
             data["MAE_clean"].append(torch.abs(torch.sigmoid(clean_preds) - y).mean().item())
             data["accuracies_clean"].append(((torch.sigmoid(clean_preds) > 0.5) == y.bool()).float().mean().item())
@@ -185,167 +193,286 @@ def train_mlp_model(model, optimizer, X, y, input_size, hidden_size, n_hidden, o
 
 
 class Figures():
-    def __init__(self, results, config, save):
+    def __init__(self, results, config, save=True):
         self.config, self.save, self.results = config, save, results
         self.path = f"figures/{config.get('exp_name', 'Experiment')}"
 
+    def _save_fig(self, base_name):
+        if not self.save: return
+        p, i = f"{self.path}/{base_name}.png", 1
+        while os.path.exists(p):
+            p, i = f"{self.path}/{base_name}_{i}.png", i + 1
+        plt.savefig(p, bbox_inches='tight', dpi=300)
+
     def _add_config_info(self, ax, show_config=True):
-        if not show_config:
-            return
-
+        if not show_config: return
         cfg = self.config
-        config_text = r"$\mathbf{Simulation's\ Configurations:}$" + "\n\n"
-        categories = {
+        txt = r"$\mathbf{Simulation's\ Configurations:}$" + "\n\n"
+        cats = {
             "Input:": ['features_types', 'seed', 'sd'],
-            "Network:": ['hidden_size', 'n_hidden', 'output_size', 'b_scale_low', 'b_scale_high',
-                         'w_scale_low', 'w_scale_high', 'optimizer_type', 'activation_type', 'batch_size']
+            "Network:": ['hidden_size', 'n_hidden', 'output_size', 'b_scale_low', 'b_scale_high', 'w_scale_low',
+                         'w_scale_high', 'optimizer_type', 'activation_type', 'batch_size']
         }
-
-        for title, keys in categories.items():
-            config_text += f"{title}\n"
+        for t, keys in cats.items():
+            txt += f"{t}\n"
             for k in keys:
-                val = cfg.get(k)
-                if isinstance(val, list): val = ', '.join(map(str, val))
-                config_text += f"   {k}: {val}\n"
-            config_text += "\n"
+                v = cfg.get(k)
+                txt += f"   {k}: {', '.join(map(str, v)) if isinstance(v, list) else v}\n"
+            txt += "\n"
 
-        config_text += "Experiment Blocks:\n"
-        for idx, block in enumerate(cfg.get('exp_blocks', []), 1):
-            name, eps, feat = block.get('block_name', 'Unnamed'), block.get('epochs', 0), block.get('deciding_feature',
-                                                                                                    0)
-            zf = block.get('zero_features', [])
-            zf_str = "None" if not zf else (",".join(map(str, zf)) if isinstance(zf, (list, tuple)) else str(zf))
-            config_text += f"   {idx}. {name}, eps: {eps}, feat: {feat}, zero: {zf_str}\n"
+        txt += "Experiment Blocks:\n"
+        for idx, b in enumerate(cfg.get('exp_blocks', []), 1):
+            zf = b.get('zero_features', [])
+            zfs = "None" if not zf else (",".join(map(str, zf)) if isinstance(zf, (list, tuple)) else str(zf))
+            txt += f"   {idx}. {b.get('block_name', 'Unnamed')}, eps: {b.get('epochs', 0)}, feat: {b.get('deciding_feature', 0)}, zero: {zfs}\n"
 
-        ax.text(1.05, 0.985, config_text.strip(), transform=ax.transAxes,
-                fontsize=9, va='top',
+        ax.text(1.05, 0.985, txt.strip(), transform=ax.transAxes, fontsize=9, va='top',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
 
+    def _plot_metric_on_ax(self, ax, metric_name, ylabel, log=False):
+        low, high, opt, bounds, blocks = [], [], [], [0], []
+        for name, res in self.results:
+            low += res["data_low"].get(metric_name, [])
+            high += res["data_high"].get(metric_name, [])
+            if f"{metric_name}_optimal" in res["data_low"]:
+                opt += res["data_low"][f"{metric_name}_optimal"]
+            bounds.append(len(low))
+            blocks.append(name)
+
+        ax.plot(low, label='Low Variance (RichMLP)', color='blue')
+        ax.plot(high, label='High Variance (LazyMLP)', color='red')
+        if self.config.get("sd", 0) > 0.0 and opt:
+            ax.plot(opt, label='Bayes Optimal', color='green', alpha=0.5)
+
+        xo = bounds[-1] * 0.02
+        for i in range(1, len(bounds) - 1):
+            ax.axvline(x=bounds[i], color='gray', linestyle='--', linewidth=1)
+            ax.text(bounds[i] - xo, sum(ax.get_ylim()) / 2, 'Block Shift', color='gray', fontsize=9, rotation=90,
+                    va='center', ha='right')
+
+        for i in range(len(blocks)):
+            ax.text((bounds[i] + bounds[i + 1]) / 2, -0.06, blocks[i], transform=ax.get_xaxis_transform(), ha='center',
+                    va='top', fontsize=10, fontweight='bold', color='darkblue')
+
+        ax.set(xlabel='Epochs', ylabel=ylabel)
+        ax.xaxis.labelpad = 20
+        if log: ax.set_yscale('log')
+        ax.grid(True, which="both", ls="-", alpha=0.5)
+
     def graph_temp1(self, y, y_axis_name, log=False, show_config=True):
-        cfg = self.config
-        exp_name = cfg.get("exp_name", "Experiment").capitalize()
-        low, high, optimal, boundaries, block_names = [], [], [], [0], []
-
-        for block_name, block_results in self.results:
-            low += block_results["data_low"][y]
-            high += block_results["data_high"][y]
-            if y + "_optimal" in block_results["data_low"]:
-                optimal += block_results["data_low"][y + "_optimal"]
-            boundaries.append(len(low))
-            block_names.append(block_name)
-
-        plt.figure(figsize=(10, 6))
+        exp = self.config.get("exp_name", "Experiment").capitalize()
+        fig, ax = plt.subplots(figsize=(10, 6))
         plt.subplots_adjust(right=0.65, bottom=0.15)
 
-        plt.plot(low, label='Low Variance (RichMLP)', color='blue')
-        plt.plot(high, label='High Variance (LazyMLP)', color='red')
-        if self.config["sd"] > 0.0 and len(optimal) > 0:
-            plt.plot(optimal, label='Bayes Optimal', color='green', alpha=0.5)
-
-        ax = plt.gca()
+        self._plot_metric_on_ax(ax, y, y_axis_name, log)
+        ax.set_title(f"{y_axis_name} Comparison in {exp}", fontweight='bold')
+        ax.legend(loc='lower left', bbox_to_anchor=(1.035, 0.0), frameon=True, edgecolor='gray')
         self._add_config_info(ax, show_config)
-
-        x_offset = boundaries[-1] * 0.02
-        for i in range(1, len(boundaries) - 1):
-            line = boundaries[i]
-            plt.axvline(x=line, color='gray', linestyle='--', linewidth=1)
-            plt.text(line - x_offset, sum(plt.ylim()) / 2, 'Block Shift', color='gray', fontsize=9,
-                     rotation=90, va='center', ha='right')
-
-        for i in range(len(block_names)):
-            start, end = boundaries[i], boundaries[i + 1]
-            ax.text((start + end) / 2, -0.06, block_names[i], transform=ax.get_xaxis_transform(),
-                    ha='center', va='top', fontsize=10, fontweight='bold', color='darkblue')
-
-        plt.title(f"{y_axis_name} Comparison in {exp_name}",
-                  fontweight='bold')
-        plt.xlabel('Epochs', labelpad=20)
-        plt.ylabel(y_axis_name)
-
-        if log: plt.yscale('log')
-        plt.legend(loc='lower left', bbox_to_anchor=(1.035, 0.0), frameon=True, edgecolor='gray', borderaxespad=0.)
-        plt.grid(True, which="both", ls="-", alpha=0.5)
-
-        if self.save:
-            base = f"{self.path}/{y}_figure_{exp_name.replace(' ', '_')}"
-            path, i = f"{base}.png", 1
-            while os.path.exists(path):
-                path, i = f"{base}_{i}.png", i + 1
-            plt.savefig(path, bbox_inches='tight', dpi=300)
+        self._save_fig(f"{y}_figure_{exp.replace(' ', '_')}")
         plt.show()
 
     def loss_graph(self, sub_type="clean"):
-        self.graph_temp1("losses_"+sub_type, sub_type.capitalize()+" BCE loss")
+        self.graph_temp1(f"losses_{sub_type}", f"{sub_type.capitalize()} BCE loss")
 
     def accuracy_graph(self, sub_type="clean"):
-        self.graph_temp1("accuracies_"+sub_type, sub_type.capitalize()+" Accuracy")
+        self.graph_temp1(f"accuracies_{sub_type}", f"{sub_type.capitalize()} Accuracy")
 
     def MAE_graph(self, sub_type="clean"):
-        self.graph_temp1("MAE_"+sub_type, sub_type.capitalize()+" Mean Absolute Error")
+        self.graph_temp1(f"MAE_{sub_type}", f"{sub_type.capitalize()} Mean Absolute Error")
+
+    def parameters_std_graph(self, layer_name="fc1", show_config=True):
+        exp = self.config.get("exp_name", "Experiment").capitalize()
+        fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+        plt.subplots_adjust(right=0.75, bottom=0.15, wspace=0.25)
+
+        self._plot_metric_on_ax(axs[0], f"{layer_name}_weight_sd", "Std Dev")
+        axs[0].set_title("Weights Standard Deviation", fontweight='bold')
+
+        self._plot_metric_on_ax(axs[1], f"{layer_name}_bias_sd", "Std Dev")
+        axs[1].set_title("Biases Standard Deviation", fontweight='bold')
+
+        fig.suptitle(f"{layer_name.upper()} Parameters Standard Deviation in {exp}", fontweight='bold', fontsize=14)
+        axs[1].legend(loc='lower left', bbox_to_anchor=(1.05, 0.0), frameon=True, edgecolor='gray')
+        self._add_config_info(axs[1], show_config)
+        self._save_fig(f"{layer_name}_std_figure_{exp.replace(' ', '_')}")
+        plt.show()
 
     def mds_graph(self, epoch=-1, layer_name='fc_last', model_type='low', show_config=True):
-        target_block, target_res, target_config, rel_epoch = None, None, None, 0
-        current_ep = 0
-
-        for block_name, block_results in self.results:
-            n_epochs = len(block_results[f"data_{model_type}"]["activation_distances_clean"])
-            if epoch == -1 or current_ep <= epoch < current_ep + n_epochs:
-                target_block = block_name
-                target_res = block_results[f"data_{model_type}"]
-                target_config = block_results["config"]
-                rel_epoch = (n_epochs - 1) if epoch == -1 else (epoch - current_ep)
+        tb, t_res, t_cfg, rel_ep, cur_ep = None, None, None, 0, 0
+        for b_name, b_res in self.results:
+            n_ep = len(b_res[f"data_{model_type}"]["activation_distances_clean"])
+            if epoch == -1 or cur_ep <= epoch < cur_ep + n_ep:
+                tb, t_res, t_cfg = b_name, b_res[f"data_{model_type}"], b_res["config"]
+                rel_ep = (n_ep - 1) if epoch == -1 else (epoch - cur_ep)
                 break
-            current_ep += n_epochs
+            cur_ep += n_ep
 
-        if target_res is None:
-            return
+        if t_res is None: return
 
-        dists_condensed = target_res["activation_distances_clean"][rel_epoch][layer_name]
-        dist_matrix = squareform(dists_condensed)
-        mds = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4)
-        coords = mds.fit_transform(dist_matrix)
-
-        y = target_res["y"].cpu().numpy().flatten()
-        X = target_res["X"].cpu().numpy()
+        dist_mat = squareform(t_res["activation_distances_clean"][rel_ep][layer_name])
+        coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(dist_mat)
+        y, X = t_res["y"].cpu().numpy().flatten(), t_res["X"].cpu().numpy()
 
         plt.figure(figsize=(9, 7))
         plt.subplots_adjust(right=0.65)
-
         scatter = plt.scatter(coords[:, 0], coords[:, 1], c=y, cmap='coolwarm', s=130, edgecolors='gray', alpha=0.85)
         self._add_config_info(plt.gca(), show_config)
 
-        features_types = self.config["features_types"]
-        zero_feats = target_config.get("zero_features", [])
-
+        ft, zf = self.config["features_types"], t_cfg.get("zero_features", [])
         for i, coord in enumerate(coords):
-            x_row = X[i]
-            feats_str = []
-            start_idx = 0
-            for f_idx, dim in enumerate(features_types):
-                if f_idx in zero_feats:
-                    feats_str.append("-")
-                else:
-                    val = np.argmax(x_row[start_idx:start_idx + dim])
-                    feats_str.append(str(val))
-                start_idx += dim
-
-            label_text = f"({','.join(feats_str)})"
-            plt.annotate(label_text, (coord[0], coord[1]), xytext=(6, 6), textcoords='offset points',
-                         fontsize=9, fontweight='bold', color='#444444')
+            f_str, s_idx = [], 0
+            for f_idx, dim in enumerate(ft):
+                f_str.append("-" if f_idx in zf else str(np.argmax(X[i][s_idx:s_idx + dim])))
+                s_idx += dim
+            plt.annotate(f"({','.join(f_str)})", coord, xytext=(6, 6), textcoords='offset points', fontsize=9,
+                         fontweight='bold', color='#444444')
 
         plt.margins(0.15)
         plt.title(
-            f"MDS of '{layer_name}' Activations ({model_type.capitalize()} Variance)\nBlock: {target_block} | Absolute Epoch: {epoch if epoch != -1 else 'Last'}",
+            f"MDS of '{layer_name}' Activations ({model_type.capitalize()} Variance)\nBlock: {tb} | Absolute Epoch: {epoch if epoch != -1 else 'Last'}",
             fontweight='bold')
-
-        handles, _ = scatter.legend_elements()
-        plt.legend(handles, ["Label 0", "Label 1"], title="True Categories", loc='best')
+        plt.legend(*scatter.legend_elements(), title="True Categories", loc='best')
         plt.grid(True, linestyle='--', alpha=0.5)
+        self._save_fig(f"MDS_{layer_name}_{model_type}_ep{epoch}")
+        plt.show()
 
-        if self.save:
-            base = f"{self.path}/MDS_{layer_name}_{model_type}_ep{epoch}"
-            path, i = f"{base}.png", 1
-            while os.path.exists(path):
-                path, i = f"{base}_{i}.png", i + 1
-            plt.savefig(path, bbox_inches='tight', dpi=300)
+
+class IDR_check():
+    def __init__(self, sd=0, activation_type="Identity", optimization_type="Adam", w_scale_low=0.1, w_scale_high=50,
+                 b_scale_low=0, b_scale_high=0, epochs=100, seed=0):
+        self.seed = seed
+        self.config = {
+            "exp_name": "idr_check", "features_types": [2], "hidden_size": 30, "n_hidden": 0, "output_size": 1,
+            "b_scale_low": b_scale_low, "b_scale_high": b_scale_high, "w_scale_low": w_scale_low,
+            "w_scale_high": w_scale_high,
+            "optimizer_type": optimization_type, "activation_type": activation_type, "batch_size": 1, "seed": seed,
+            "sd": sd,
+            "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": (), "epochs": epochs}]
+        }
+        self.t = torch.linspace(-0.5, 1.5, steps=100).view(-1, 1)
+        self._reset_data()
+
+    def _reset_data(self):
+        self.model_low_preds = []
+        self.model_high_preds = []
+        self.low_params = []
+        self.high_params = []
+        self.config["seed"] = self.seed
+
+    def _cdf_func(self, x, mu, sigma):
+        return norm.cdf(x, loc=mu, scale=sigma)
+
+    def get_data(self, seed):
+        from simulations import run_experiment
+        self.config["seed"] = seed
+        results = run_experiment(self.config)
+        model_low, model_high = results[0][1]["model_low"], results[0][1]["model_high"]
+
+        start_point, end_point = torch.tensor([0.0, 1.0]), torch.tensor([1.0, 0.0])
+        line_points = start_point + self.t * (end_point - start_point)
+
+        with torch.no_grad():
+            low_preds = torch.sigmoid(model_low(line_points)).numpy().flatten()
+            high_preds = torch.sigmoid(model_high(line_points)).numpy().flatten()
+
+        self.model_low_preds.append(low_preds)
+        self.model_high_preds.append(high_preds)
+
+        t_vals = self.t.flatten().numpy()
+
+        try:
+            popt_low, _ = curve_fit(self._cdf_func, t_vals, low_preds, p0=[0.5, 0.1], bounds=([-2, 1e-5], [3, 5]))
+            self.low_params.append(tuple(popt_low))
+        except RuntimeError:
+            self.low_params.append((np.nan, np.nan))
+        try:
+            popt_high, _ = curve_fit(self._cdf_func, t_vals, high_preds, p0=[0.5, 0.1], bounds=([-2, 1e-5], [3, 5]))
+            self.high_params.append(tuple(popt_high))
+        except RuntimeError:
+            self.high_params.append((np.nan, np.nan))
+
+        return results
+
+    def plot_sigmoids(self, seed=0):
+        self._reset_data()
+        results = self.get_data(seed)
+        t_vals = self.t.flatten().numpy()
+
+        plt.figure(figsize=(10, 6))
+        plt.subplots_adjust(right=0.65)
+
+        plt.plot(t_vals, self.model_low_preds[-1], color='blue', label='Low Variance (RichMLP)', linewidth=2)
+        plt.plot(t_vals, self.model_high_preds[-1], color='red', label='High Variance (LazyMLP)', linewidth=2)
+
+        mu_low = self.low_params[-1][0]
+        mu_high = self.high_params[-1][0]
+
+        plt.axvline(x=0.5, color='gray', linestyle='--', linewidth=1, label='Actual Midpoint (t=0.5)')
+        if not np.isnan(mu_low):
+            plt.axvline(x=mu_low, color='blue', linestyle='--', linewidth=1, alpha=0.3,
+                        label=f'RichMLP Fit $\\mu$={mu_low:.2f}')
+        if not np.isnan(mu_high):
+            plt.axvline(x=mu_high, color='red', linestyle='--', linewidth=1, alpha=0.3,
+                        label=f'LazyMLP Fit $\\mu$={mu_high:.2f}')
+
+        plt.title("Dynamic Range", fontweight='bold', fontsize=14)
+        plt.xlabel("Input space on the line between (0,1) to (1,0)", fontsize=11)
+        plt.ylabel("Model Prediction (Sigmoid)", fontsize=11)
+        plt.xticks([0, 0.5, 1], ['(0,1)', '(0.5,0.5)', '(1,0)'])
+
+        Figures(results, self.config)._add_config_info(plt.gca())
+
+        plt.legend(loc='lower left', bbox_to_anchor=(1.035, 0.0), frameon=True, edgecolor='gray')
+        plt.grid(True, linestyle='--', alpha=0.4)
+        plt.ylim(-0.05, 1.05)
+        plt.show()
+
+    def plot_histograms(self, num_seeds=50):
+        import sys, os
+        from tqdm import tqdm
+        from matplotlib.ticker import MaxNLocator
+
+        self._reset_data()
+        orig_out, orig_err = sys.stdout, sys.stderr
+
+        try:
+            with open(os.devnull, 'w') as devnull:
+                sys.stdout, sys.stderr = devnull, devnull
+                pbar = tqdm(total=num_seeds, file=orig_err, desc="Running Simulations")
+                for s in range(num_seeds):
+                    self.get_data(seed=s)
+                    pbar.update(1)
+                pbar.close()
+        finally:
+            sys.stdout, sys.stderr = orig_out, orig_err
+
+        l_mu = [p[0] for p in self.low_params if not np.isnan(p[0])]
+        l_sig = [p[1] for p in self.low_params if not np.isnan(p[1])]
+        h_mu = [p[0] for p in self.high_params if not np.isnan(p[0])]
+        h_sig = [p[1] for p in self.high_params if not np.isnan(p[1])]
+
+        fig, axs = plt.subplots(1, 2, figsize=(14, 5))
+        a_mu, a_sig = l_mu + h_mu, l_sig + h_sig
+
+        b_mu = np.linspace(min(a_mu), max(a_mu), 41) if a_mu and max(a_mu) > min(a_mu) else 40
+        axs[0].hist(l_mu, bins=b_mu, alpha=0.5, color='blue',
+                    label=f'Low Variance (Mean={np.mean(l_mu):.2f}, Var={np.var(l_mu):.4f})')
+        axs[0].hist(h_mu, bins=b_mu, alpha=0.5, color='red',
+                    label=f'High Variance (Mean={np.mean(h_mu):.2f}, Var={np.var(h_mu):.4f})')
+        axs[0].set_title(r"Distribution of Means ($\mu$)")
+        axs[0].set(xlabel=r"$\mu$ value", ylabel="Frequency")
+        axs[0].legend()
+        axs[0].yaxis.set_major_locator(MaxNLocator(integer=True))
+
+        b_sig = np.linspace(min(a_sig), max(a_sig), 41) if a_sig and max(a_sig) > min(a_sig) else 40
+        axs[1].hist(l_sig, bins=b_sig, alpha=0.5, color='blue',
+                    label=f'Low Variance (Mean={np.mean(l_sig):.2f}, Var={np.var(l_sig):.4f})')
+        axs[1].hist(h_sig, bins=b_sig, alpha=0.5, color='red',
+                    label=f'High Variance (Mean={np.mean(h_sig):.2f}, Var={np.var(h_sig):.4f})')
+        axs[1].set_title(r"Distribution of Standard Deviations ($\sigma$)")
+        axs[1].set(xlabel=r"$\sigma$ value")
+        axs[1].legend()
+        axs[1].yaxis.set_major_locator(MaxNLocator(integer=True))
+
+        plt.tight_layout()
         plt.show()
