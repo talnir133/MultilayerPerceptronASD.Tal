@@ -103,7 +103,7 @@ def run_simulation_from_dictionary(config, figures_config):
 
 CONFIG = {
     "exp_name": "test1",
-    "features_types": [2],
+    "features_types": [4,4],
     "hidden_size": 30,
     "n_hidden": 0,
     "output_size": 1,
@@ -122,24 +122,24 @@ CONFIG = {
 FIGURES_CONFIG_1 = [("mds_graph", {"epoch": -1, "layer_name": "fc1", "model_type": "low"}),
                   ("mds_graph", {"epoch": -1, "layer_name": "fc1", "model_type": "high"})]
 
-FIGURES_CONFIG_2 = [("accuracy_graph", {"sub_type": "clean"}), ("MAE_graph", {"sub_type": "clean"}),("parameters_std_graph", {})]
+FIGURES_CONFIG_2 = [("accuracy_graph", {"sub_type": "clean"}), ("MAE_graph", {"sub_type": "clean"})]
 
 import numpy as np
 
 
 
-if __name__ == '__main__':
-    # --- OPTION A: Launch the GUI:
-    # run_simulation_from_gui(FIGURES_CONFIG_2)
-
-    # --- OPTION B: Bypass GUI and run from a specific JSON file:
-    # run_simulation_from_config_file("test", FIGURES_CONFIG)
-
-    # --- OPTION C: Bypass GUI and run from a provided configuration dictionary:
-    # run_simulation_from_dictionary(CONFIG, FIGURES_CONFIG_2)
-
-    # --- IDR check ---
-    idr = IDR_check(w_scale_low=1, w_scale_high=1, b_scale_low=0.1, b_scale_high=5, epochs=500, seed=0, activation_type="Tanh")
-    # idr.plot_sigmoids(23)
-    # idr.plot_histograms(30)
-    run_simulation_from_dictionary(idr.config, FIGURES_CONFIG_2)
+# if __name__ == '__main__':
+#     # --- OPTION A: Launch the GUI:
+#     # run_simulation_from_gui(FIGURES_CONFIG_2)
+#
+#     # --- OPTION B: Bypass GUI and run from a specific JSON file:
+#     # run_simulation_from_config_file("test", FIGURES_CONFIG)
+#
+#     # --- OPTION C: Bypass GUI and run from a provided configuration dictionary:
+#     # run_simulation_from_dictionary(CONFIG, FIGURES_CONFIG_2)
+#
+#     # --- IDR check ---
+#     idr = IDR_check(w_scale_low=1, w_scale_high=1, b_scale_low=0.1, b_scale_high=5, epochs=500, seed=0, activation_type="Tanh")
+#     # idr.plot_sigmoids(23)
+#     # idr.plot_histograms(30)
+#     run_simulation_from_dictionary(CONFIG, FIGURES_CONFIG_2)
