@@ -21,14 +21,7 @@ class Simulation:
     def run(self):
 
         simulation_results = []
-        optimizers, models = {}, {}
-        cfg = self.global_config
-        for condition in ("low", "high"):
-            models[condition] = MLP(
-                input_size = sum(cfg["features_types"]), w_scale=cfg[f"w_scale_{condition}"],
-                b_scale=cfg[f"b_scale_{condition}"], **self.global_config).to(self.device)
-            optimizers[condition] = self.global_config["optimizer_type"](models[condition].parameters(), lr=0.004)
-
+        optimizers, models = {"low": None, "high": None}, {"low": None, "high": None}
         for block in self.global_config["exp_blocks"]:
             block_config = self.get_block_configs(block)
             block_results = self.run_block(models, optimizers, block_config)
@@ -39,6 +32,15 @@ class Simulation:
 
     def run_block(self, models, optimizers, cfg):
         print(f"\n--- Running Block: {cfg['block_name']} ---")
+
+        if models["low"] is None:
+            for condition in ["low", "high"]:
+                models[condition] = MLP(
+                    cfg["input_size"], cfg["hidden_size"], cfg["n_hidden"],
+                    cfg["output_size"], cfg[f"w_scale_{condition}"],
+                    cfg[f"b_scale_{condition}"], cfg["activation_type"]
+                ).to(self.device)
+                optimizers[condition] = cfg["optimizer_type"](models[condition].parameters(), lr=0.004)
 
         X, y = self.dataset.get_block_data(cfg.get("zero_features", []), cfg["deciding_feature"])
         X, y = X.to(self.device), y.to(self.device)
@@ -73,6 +75,8 @@ class Simulation:
     def get_block_configs(self, block):
         block_config = copy.deepcopy(self.global_config)
         block_config.update(block)
+
+        block_config["input_size"] = sum(block_config["features_types"])
         opt_map = {"Adam": optim.Adam, "SGD": optim.SGD}
         block_config["optimizer_type"] = opt_map[block_config["optimizer_type"]]
 
