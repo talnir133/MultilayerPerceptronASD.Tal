@@ -9,12 +9,13 @@ from classification_rules import RULES_REGISTRY
 
 DEFAULT_CONFIG = {
     "exp_name": "default_config",
-    "features_types": [4, 4, 8], "hidden_size": 30, "n_hidden": 0, "output_size": 1,
+    "features_types": [4, 4, 8], "hidden_size": 30, "n_hidden": 0,
     "b_scale_low": 0.0, "b_scale_high": 0.0, "w_scale_low": 0.1, "w_scale_high": 50.0,
     "optimizer_type": "Adam", "activation_type": "Identity", "batch_size": 32,
     "seed": 0, "sd": 0.0,
     "exp_blocks": [
-        {"block_name": "M1", "rule": "upper_half", "deciding_feature": 0, "zero_features": [2], "epochs": 25}]
+        {"block_name": "M1", "rule": "upper_half", "deciding_feature": 0, "zero_features": [2], "epochs": 25, "alpha_class": 1.0, "alpha_rec": 0.0}
+    ]
 }
 
 
@@ -66,7 +67,8 @@ class ConfigGUI(QWidget):
         # --- 2. Set Network ---
         group2 = QGroupBox("2. Set Network")
         form2 = QFormLayout()
-        for k in ["hidden_size", "n_hidden", "output_size"]:
+        # output_size was removed from here because it is now calculated automatically
+        for k in ["hidden_size", "n_hidden"]:
             self.add_spinbox(form2, k, self.config.get(k, 0))
         for k in ["b_scale_low", "b_scale_high", "w_scale_low", "w_scale_high"]:
             self.add_double_spinbox(form2, k, self.config.get(k, 0.0))
@@ -108,7 +110,7 @@ class ConfigGUI(QWidget):
         main_layout.addLayout(right_layout, 2)
         self.setLayout(main_layout)
         self.setWindowTitle("Simulation Manager")
-        self.resize(1000, 650)
+        self.resize(1050, 650)  # Slightly wider to fit the new alpha fields nicely
 
         self.inputs["features_types"].textChanged.connect(self.update_all_shapes)
         self.populate_blocks()
@@ -160,7 +162,7 @@ class ConfigGUI(QWidget):
         name_lbl = QLabel("Name:")
         name_lbl.setStyleSheet("color: #333; font-size: 11px; font-weight: bold;")
         name = QLineEdit(data.get("block_name", f"S{len(self.block_widgets) + 1}"))
-        name.setFixedWidth(70)
+        name.setFixedWidth(65)
 
         # 2. Epochs
         ep_lbl = QLabel("Epochs:")
@@ -185,7 +187,25 @@ class ConfigGUI(QWidget):
         zf_str = ",".join(map(str, zf_val)) if isinstance(zf_val, (list, tuple)) else str(zf_val)
         zf = QLineEdit(zf_str)
         zf.setPlaceholderText("e.g. 2,3")
-        zf.setFixedWidth(80)
+        zf.setFixedWidth(60)
+
+        # 5. Alpha Class
+        ac_lbl = QLabel("a_c:")
+        ac_lbl.setStyleSheet("color: #333; font-size: 11px; font-weight: bold;")
+        ac = QDoubleSpinBox()
+        ac.setRange(0.0, 100.0)
+        ac.setSingleStep(0.1)
+        ac.setValue(data.get("alpha_class", 1.0))
+        ac.setFixedWidth(45)
+
+        # 6. Alpha Rec
+        ar_lbl = QLabel("a_r:")
+        ar_lbl.setStyleSheet("color: #333; font-size: 11px; font-weight: bold;")
+        ar = QDoubleSpinBox()
+        ar.setRange(0.0, 100.0)
+        ar.setSingleStep(0.1)
+        ar.setValue(data.get("alpha_rec", 0.0))
+        ar.setFixedWidth(45)
 
         # Delete Button
         dl = QPushButton("❌")
@@ -193,7 +213,7 @@ class ConfigGUI(QWidget):
         dl.setStyleSheet("background-color: transparent;")
 
         # Add all to top row
-        for w in [name_lbl, name, ep_lbl, ep, rule_lbl, rule_cb, zf_lbl, zf]:
+        for w in [name_lbl, name, ep_lbl, ep, rule_lbl, rule_cb, zf_lbl, zf, ac_lbl, ac, ar_lbl, ar]:
             row_top.addWidget(w)
 
         row_top.addStretch()  # Pushes the inputs to the left and the delete button to the right
@@ -255,6 +275,7 @@ class ConfigGUI(QWidget):
         ly.addWidget(shape_lbl)
 
         d = {"row": row, "name": name, "ep": ep, "rule_cb": rule_cb, "zf": zf,
+             "ac": ac, "ar": ar,
              "params_widgets": params_widgets, "shape_lbl": shape_lbl}
 
         self.block_widgets.append(d)
@@ -342,7 +363,9 @@ class ConfigGUI(QWidget):
                 "block_name": w["name"].text(),
                 "rule": w["rule_cb"].currentText(),
                 "zero_features": self.parse_zf(w["zf"].text()),
-                "epochs": w["ep"].value()
+                "epochs": w["ep"].value(),
+                "alpha_class": w["ac"].value(),
+                "alpha_rec": w["ar"].value()
             }
             # Extract dynamically generated parameters
             for param_name, param_widget in w["params_widgets"].items():

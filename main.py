@@ -7,10 +7,9 @@ from dynamic_ranges import IDR_check
 
 CONFIG = {
     "exp_name": "test2",
-    "features_types": [4,4],
+    "features_types": [2,2],
     "hidden_size": 30,
     "n_hidden": 0,
-    "output_size": 1,
     "b_scale_low": 0,
     "b_scale_high": 0,
     "w_scale_low": 0.1,
@@ -19,9 +18,9 @@ CONFIG = {
     "activation_type": "Identity",
     "batch_size": 1,
     "seed": 0,
-    "sd": 0,
-    "exp_blocks": [{"block_name": "M1", "zero_features": (),"rule": "upper_half","deciding_feature":0, "epochs": 20},
-                   {"block_name": "M1", "zero_features": (), "rule": "parity", "feat_idx":0, "epochs": 20} ]
+    "sd": 0.1,
+    "exp_blocks": [{"block_name": "M1", "zero_features": (),"rule": "upper_half","deciding_feature":0, "epochs": 20, "alpha_class": 1, "alpha_rec": 1},
+                   {"block_name": "M1", "zero_features": (), "rule": "parity", "feat_idx":0, "epochs": 200,  "alpha_class": 1, "alpha_rec": 1} ]
 }
 
 
@@ -42,9 +41,9 @@ if __name__ == '__main__':
     # s = run_simulation("test")
     # s = run_simulation(CONFIG)
     # s.plot_mae()
-    # s.plot_mae(sub_type="noisy")
-    # s.plot_mds(epoch=50)
-    s.plot_loss(sub_type="noisy")
+    s.plot_mae(sub_type="noisy")
+    s.plot_mds(20)
+    # s.plot_loss(sub_type="noisy")
     # s.plot_accuracy(sub_type="noisy")
     # s.plot_parameters_std()
 

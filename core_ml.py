@@ -5,7 +5,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
-
 class Dataset:
     def __init__(self, features_types):
         self.features_types = features_types
@@ -25,16 +24,20 @@ class Dataset:
         self.names = torch.tensor(list(itertools.product(*names))).float()
 
     def get_block_data(self, zero_features, rule_func):
-        """Core data preparation: knows nothing about specific rule parameters."""
+        """Core data preparation: creates targets for both classification and reconstruction."""
         X = self.exp_X.clone()
         offsets = np.cumsum([0] + self.features_types)
         for i in zero_features:
             X[:, offsets[i]: offsets[i + 1]] = 0
 
-        y = rule_func(self.names).view(-1, 1)
+        y_class = rule_func(self.names).view(-1, 1)
+        y_rec = self.exp_X.clone()
+        y_full = torch.cat((y_class, y_rec), dim=1)
 
-        unique_data = torch.unique(torch.cat((X, y), dim=1), dim=0)
-        return unique_data[:, :-1], unique_data[:, -1:]
+        unique_data = torch.unique(torch.cat((X, y_full), dim=1), dim=0)
+        D = self.exp_X.shape[1]
+        block_X, block_y = unique_data[:, :D], unique_data[:, D:]
+        return block_X, block_y
 
 
 class MLP(nn.Module):
@@ -68,7 +71,8 @@ class MLP(nn.Module):
                     nn.init.xavier_normal_(m.weight)
 
 
-def train_model(model, optimizer, X_base, y, epochs, batch_size, noise_sd, noise_mask, metric_callback):
+def train_model(model, optimizer, X_base, y, epochs, batch_size, noise_sd, noise_mask, alpha_class,
+                alpha_rec, metric_callback):
     criterion = nn.BCEWithLogitsLoss()
 
     for epoch in tqdm(range(epochs), desc="Training"):
@@ -91,7 +95,22 @@ def train_model(model, optimizer, X_base, y, epochs, batch_size, noise_sd, noise
 
         for inputs, labels in dataloader:
             optimizer.zero_grad()
-            loss = criterion(model(inputs), labels)
+            outputs = model(inputs)
+
+            # --- DUAL LOSS CALCULATION ---
+
+            # 1. Classification Loss (First coordinate)
+            preds_class = outputs[:, 0:1]
+            labels_class = labels[:, 0:1]
+            loss = alpha_class * criterion(preds_class, labels_class)
+
+            # 2. Reconstruction Loss (Remaining coordinates)
+            if alpha_rec > 0:
+                preds_rec = outputs[:, 1:]
+                labels_rec = labels[:, 1:]
+                loss += alpha_rec * criterion(preds_rec, labels_rec)
+
+            # Backpropagation of the combined loss
             loss.backward()
             optimizer.step()
 

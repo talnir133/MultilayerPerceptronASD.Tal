@@ -39,8 +39,8 @@ class Simulation:
         rule_to_apply = partial(base_rule, **cfg)
         X, y = self.dataset.get_block_data(cfg["zero_features"], rule_to_apply)
         X, y = X.to(self.device), y.to(self.device)
-        print("X:", X)
-        print("y:", y)
+        # print("X:", X)
+        # print("y:", y)
         noise_mask = get_noise_mask(cfg, X).to(self.device)
         data_low = create_tracker(X, y)
         data_high = create_tracker(X, y)
@@ -63,6 +63,7 @@ class Simulation:
         model_low, optimizer_low = train_model(
             models["low"], optimizers["low"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
+            cfg["alpha_class"], cfg["alpha_rec"],
             metric_callback=get_metric_callback(data_low, cfg, X, y)
         )
 
@@ -84,7 +85,8 @@ class Simulation:
         model_high, optimizer_high = train_model(
             models["high"], optimizers["high"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
-            metric_callback=get_metric_callback(data_high, cfg, X, y)
+            cfg["alpha_class"], cfg["alpha_rec"],
+            metric_callback=get_metric_callback(data_high, cfg, X, y),
         )
 
         # --- Final loss computation---
@@ -93,7 +95,8 @@ class Simulation:
             mdl.eval()
             with torch.no_grad():
                 y_pred = mdl(X)
-                print(f'{condition.capitalize()} Variance Final Loss: {criterion(y_pred, y).item():.4f}')
+                final_class_loss = criterion(y_pred[:, 0:1], y[:, 0:1]).item()
+                print(f'{condition.capitalize()} Final Classification Loss: {final_class_loss:.4f}')
 
         return {
             "X": X, "y": y, "config": cfg,
@@ -106,6 +109,9 @@ class Simulation:
         block_config.update(block)
 
         block_config["input_size"] = sum(block_config["features_types"])
+        block_config["output_size"] = 1 + block_config["input_size"]
+        block_config.setdefault("alpha_class", 1.0)
+        block_config.setdefault("alpha_rec", 0.0)
         opt_map = {"Adam": optim.Adam, "SGD": optim.SGD}
         block_config["optimizer_type"] = opt_map[block_config["optimizer_type"]]
 
@@ -151,34 +157,42 @@ def create_tracker(X, y):
 
 def get_metric_callback(tracker, cfg, X_base, y):
     """Factory method: generates the specific callback function for a model."""
+
+    # מבודדים מראש את עמודת ה-Label של הקטלוג מתוך כלל המטריצה Y
+    y_class = y[:, 0:1]
+
     def callback(current_model, X_noisy, loss_criterion):
         tracker["noised_data"].append(X_noisy.cpu().detach().numpy())
         tracker["fc1_weight_sd"].append(current_model._layers.fc1.weight.std().item())
         tracker["fc1_bias_sd"].append(
             current_model._layers.fc1.bias.std().item() if current_model._layers.fc1.bias is not None else 0.0)
 
+        # Clean tracking
         clean_preds = current_model(X_base)
-        tracker["losses_clean"].append(loss_criterion(clean_preds, y).item())
-        tracker["MAE_clean"].append(torch.abs(torch.sigmoid(clean_preds) - y).mean().item())
-        tracker["accuracies_clean"].append(((torch.sigmoid(clean_preds) > 0.5) == y.bool()).float().mean().item())
+        clean_preds_class = clean_preds[:, 0:1]
+        tracker["losses_clean"].append(loss_criterion(clean_preds_class, y_class).item())
+        tracker["MAE_clean"].append(torch.abs(torch.sigmoid(clean_preds_class) - y_class).mean().item())
+        tracker["accuracies_clean"].append(
+            ((torch.sigmoid(clean_preds_class) > 0.5) == y_class.bool()).float().mean().item())
 
         acts = get_network_activations(current_model, X_base)
         epoch_act_dist = {}
         for name, act_np in acts.items():
             epoch_act_dist[name] = pairwise_distances(act_np)[np.triu_indices(X_base.shape[0], k=1)]
-
         tracker["activations_clean"].append(acts)
         tracker["activation_distances_clean"].append(epoch_act_dist)
 
+        # Noisy tracking
         if cfg["sd"] > 0:
-            opt_probs = get_bayes_optimal_probabilities(X_noisy, cfg["sd"], X_base, y)
-            model_probs = torch.sigmoid(current_model(X_noisy))
-            tracker["losses_noisy"].append(loss_criterion(model_probs, y).item())
-            tracker["MAE_noisy"].append(torch.abs(model_probs - y).mean().item())
-            tracker["accuracies_noisy"].append(((model_probs > 0.5) == y.bool()).float().mean().item())
-            tracker["losses_noisy_optimal"].append(loss_criterion(opt_probs, y).item())
-            tracker["MAE_noisy_optimal"].append(torch.abs(opt_probs - y).mean().item())
-            tracker["accuracies_noisy_optimal"].append(((opt_probs > 0.5) == y.bool()).float().mean().item())
+            noisy_preds = current_model(X_noisy)
+            noisy_preds_class = noisy_preds[:, 0:1]
+            opt_probs = get_bayes_optimal_probabilities(X_noisy, cfg["sd"], X_base, y_class)
+            model_probs = torch.sigmoid(noisy_preds_class)
+            tracker["losses_noisy"].append(loss_criterion(noisy_preds_class, y_class).item())
+            tracker["MAE_noisy"].append(torch.abs(model_probs - y_class).mean().item())
+            tracker["accuracies_noisy"].append(((model_probs > 0.5) == y_class.bool()).float().mean().item())
+            tracker["MAE_noisy_optimal"].append(torch.abs(opt_probs - y_class).mean().item())
+            tracker["accuracies_noisy_optimal"].append(((opt_probs > 0.5) == y_class.bool()).float().mean().item())
             tracker["MAE_to_optimal"].append(torch.abs(model_probs - opt_probs).mean().item())
             tracker["accuracies_to_optimal"].append(
                 ((model_probs > 0.5) == (opt_probs > 0.5)).float().mean().item())

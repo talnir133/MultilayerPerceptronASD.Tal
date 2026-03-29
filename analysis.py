@@ -4,6 +4,10 @@ from sklearn.manifold import MDS
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+
 
 
 class SimulationAnalyzer:
@@ -66,17 +70,16 @@ class SimulationAnalyzer:
             zf = block.get('zero_features', [])
             zf_str = "None" if not zf else (",".join(map(str, zf)) if isinstance(zf, (list, tuple)) else str(zf))
             rule_name = block.get('rule', 'upper_half')
-
-            # Extract all custom parameters that belong to the rule dynamically
+            a_class = block.get('alpha_class', 1)
+            a_rec = block.get('alpha_rec', 0)
             rule_params = [f"{k}={v}" for k, v in block.items() if
-                           k not in ['block_name', 'epochs', 'zero_features', 'rule']]
+                           k not in ['block_name', 'epochs', 'zero_features', 'rule', 'alpha_class', 'alpha_rec']]
             params_str = f"({', '.join(rule_params)})" if rule_params else ""
-
-            txt += f"   {idx}. {block.get('block_name', 'Unnamed')}, eps: {block.get('epochs', 0)}, zero: {zf_str}\n"
+            txt += f"   {idx}. {block.get('block_name', 'Unnamed')}, eps: {block.get('epochs', 0)}, zero: {zf_str}, a_c: {a_class}, a_r: {a_rec}\n"
             txt += f"      Rule: {rule_name} {params_str}\n"
+
         ax.text(1.05, 0.985, txt.strip(), transform=ax.transAxes, fontsize=7, va='top',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
-
     def _plot_metric_on_ax(self, ax, metric_name, ylabel, log_scale=False):
         """Core plotting engine for tracking metrics across continuous blocks."""
         low, high, opt, bounds, blocks = [], [], [], [0], []
@@ -172,9 +175,9 @@ class SimulationAnalyzer:
             return
 
         dist_mat = squareform(target_res["activation_distances_clean"][rel_epoch][layer_name])
-        coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(dist_mat)
+        coords = MDS(n_components=2, metric='precomputed', random_state=42, n_init=4, init='random').fit_transform(dist_mat)
 
-        y = target_res["y"].cpu().numpy().flatten()
+        y = target_res["y"][:,0].cpu().numpy().flatten()
         X = target_res["X"].cpu().numpy()
 
         plt.figure(figsize=(9, 7))
