@@ -1,8 +1,11 @@
-import sys, os, ast, json
+import sys, os, ast, json, inspect
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QPushButton, QSpinBox, QDoubleSpinBox, QComboBox, QLabel,
                              QLineEdit, QGroupBox, QFileDialog, QScrollArea, QFrame)
 from PyQt5.QtCore import Qt
+
+# Import the registry to dynamically build the GUI elements
+from classification_rules import RULES_REGISTRY
 
 DEFAULT_CONFIG = {
     "exp_name": "default_config",
@@ -10,7 +13,8 @@ DEFAULT_CONFIG = {
     "b_scale_low": 0.0, "b_scale_high": 0.0, "w_scale_low": 0.1, "w_scale_high": 50.0,
     "optimizer_type": "Adam", "activation_type": "Identity", "batch_size": 32,
     "seed": 0, "sd": 0.0,
-    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": [2], "epochs": 25}]
+    "exp_blocks": [
+        {"block_name": "M1", "rule": "upper_half", "deciding_feature": 0, "zero_features": [2], "epochs": 25}]
 }
 
 
@@ -33,7 +37,7 @@ class ConfigGUI(QWidget):
         self.config = get_latest_config()
         self.inputs = {}
         self.block_widgets = []
-        self.start_simulation = False  # Flag to indicate if the user clicked "Run"
+        self.start_simulation = False
         self.init_ui()
 
     def init_ui(self):
@@ -104,7 +108,7 @@ class ConfigGUI(QWidget):
         main_layout.addLayout(right_layout, 2)
         self.setLayout(main_layout)
         self.setWindowTitle("Simulation Manager")
-        self.resize(900, 650)
+        self.resize(1000, 650)
 
         self.inputs["features_types"].textChanged.connect(self.update_all_shapes)
         self.populate_blocks()
@@ -151,36 +155,108 @@ class ConfigGUI(QWidget):
         ly.setContentsMargins(10, 10, 10, 10)
 
         row_top = QHBoxLayout()
+
+        # 1. Block Name
+        name_lbl = QLabel("Name:")
+        name_lbl.setStyleSheet("color: #333; font-size: 11px; font-weight: bold;")
         name = QLineEdit(data.get("block_name", f"S{len(self.block_widgets) + 1}"))
-        name.setFixedWidth(80)
+        name.setFixedWidth(70)
+
+        # 2. Epochs
+        ep_lbl = QLabel("Epochs:")
+        ep_lbl.setStyleSheet("color: #333; font-size: 11px; font-weight: bold;")
         ep = QSpinBox()
         ep.setRange(1, 10000)
         ep.setValue(data.get("epochs", 25))
-        ep.setPrefix("Ep: ")
-        df = QSpinBox()
-        df.setRange(0, 10)
-        df.setValue(data.get("deciding_feature", 0))
-        df.setPrefix("Feat: ")
 
+        # 3. Rule Selection
+        rule_lbl = QLabel("Rule:")
+        rule_lbl.setStyleSheet("color: #333; font-size: 11px; font-weight: bold;")
+        rule_cb = QComboBox()
+        rule_cb.addItems(list(RULES_REGISTRY.keys()))
+        default_rule = data.get("rule", "upper_half")
+        if default_rule in RULES_REGISTRY:
+            rule_cb.setCurrentText(default_rule)
+
+        # 4. Zero Features
+        zf_lbl = QLabel("Zero Feats:")
+        zf_lbl.setStyleSheet("color: #333; font-size: 11px; font-weight: bold;")
         zf_val = data.get("zero_features", [])
         zf_str = ",".join(map(str, zf_val)) if isinstance(zf_val, (list, tuple)) else str(zf_val)
         zf = QLineEdit(zf_str)
-        zf.setPlaceholderText("Zero Feats (e.g. 2)")
+        zf.setPlaceholderText("e.g. 2,3")
+        zf.setFixedWidth(80)
 
+        # Delete Button
         dl = QPushButton("❌")
         dl.setFixedWidth(30)
         dl.setStyleSheet("background-color: transparent;")
 
-        for w in [name, ep, df, zf, dl]:
+        # Add all to top row
+        for w in [name_lbl, name, ep_lbl, ep, rule_lbl, rule_cb, zf_lbl, zf]:
             row_top.addWidget(w)
+
+        row_top.addStretch()  # Pushes the inputs to the left and the delete button to the right
+        row_top.addWidget(dl)
+
+        # Dynamic Parameters Layout (Created below the top row)
+        params_layout = QHBoxLayout()
+        params_layout.setAlignment(Qt.AlignLeft)
+        params_widgets = {}
+
+        def update_rule_params():
+            # Clear existing dynamic widgets
+            for i in reversed(range(params_layout.count())):
+                widget = params_layout.itemAt(i).widget()
+                if widget:
+                    widget.deleteLater()
+            params_widgets.clear()
+
+            rule_name = rule_cb.currentText()
+            rule_func = RULES_REGISTRY[rule_name]
+            sig = inspect.signature(rule_func)
+
+            # Dynamically generate inputs based on function signature
+            for param_name, param in sig.parameters.items():
+                if param_name in ['names', 'features_types', 'kwargs']:
+                    continue
+
+                lbl = QLabel(f"{param_name}:")
+                lbl.setStyleSheet("color: #333; font-size: 11px;")
+
+                # Determine default value
+                default_val = param.default if param.default != inspect.Parameter.empty else 0
+                val = data.get(param_name, default_val)
+
+                # Create appropriate SpinBox based on type
+                if isinstance(default_val, float):
+                    spb = QDoubleSpinBox()
+                    spb.setRange(-1000.0, 1000.0)
+                else:
+                    spb = QSpinBox()
+                    spb.setRange(-1000, 1000)
+
+                spb.setValue(val)
+                spb.setFixedWidth(60)
+
+                params_layout.addWidget(lbl)
+                params_layout.addWidget(spb)
+                params_widgets[param_name] = spb
+
+        # Connect combo box to trigger dynamic rebuild
+        rule_cb.currentTextChanged.connect(update_rule_params)
+        update_rule_params()  # Initialize first time
 
         shape_lbl = QLabel("")
         shape_lbl.setStyleSheet("color: #555; font-size: 11px; font-weight: bold; margin-top: 3px;")
 
         ly.addLayout(row_top)
+        ly.addLayout(params_layout)
         ly.addWidget(shape_lbl)
 
-        d = {"row": row, "name": name, "ep": ep, "df": df, "zf": zf, "shape_lbl": shape_lbl}
+        d = {"row": row, "name": name, "ep": ep, "rule_cb": rule_cb, "zf": zf,
+             "params_widgets": params_widgets, "shape_lbl": shape_lbl}
+
         self.block_widgets.append(d)
         self.sl.addWidget(row)
 
@@ -210,7 +286,7 @@ class ConfigGUI(QWidget):
 
             p_base, s_base = 1, sum(ft)
             for d in ft: p_base *= d
-            self.data_shape_label.setText(f"Exp Base Data Shape: ({p_base}, {s_base})")
+            self.data_shape_label.setText(f"Base Data Shape: ({p_base}, {s_base})")
 
             for w in self.block_widgets:
                 name = w["name"].text()
@@ -244,7 +320,6 @@ class ConfigGUI(QWidget):
             self.populate_blocks()
 
     def on_run(self):
-        """Builds the final config dictionary, saves it, and closes the window."""
         for k, w in self.inputs.items():
             if isinstance(w, QSpinBox):
                 self.config[k] = w.value()
@@ -261,27 +336,33 @@ class ConfigGUI(QWidget):
                 else:
                     self.config[k] = w.text()
 
-        self.config["exp_blocks"] = [{"block_name": w["name"].text(), "deciding_feature": w["df"].value(),
-                                      "zero_features": self.parse_zf(w["zf"].text()), "epochs": w["ep"].value()} for w
-                                     in self.block_widgets]
+        self.config["exp_blocks"] = []
+        for w in self.block_widgets:
+            block_cfg = {
+                "block_name": w["name"].text(),
+                "rule": w["rule_cb"].currentText(),
+                "zero_features": self.parse_zf(w["zf"].text()),
+                "epochs": w["ep"].value()
+            }
+            # Extract dynamically generated parameters
+            for param_name, param_widget in w["params_widgets"].items():
+                block_cfg[param_name] = param_widget.value()
+
+            self.config["exp_blocks"].append(block_cfg)
 
         os.makedirs("configs", exist_ok=True)
         with open(f"configs/{self.config['exp_name']}.json", 'w') as f:
             json.dump(self.config, f, indent=4)
 
-        # Signal that the user actually wants to run, and close the GUI
         self.start_simulation = True
         self.close()
 
 
 def launch_gui():
-    """Starts the GUI, blocks until closed, and returns the generated config (or None if cancelled)."""
     app = QApplication.instance() or QApplication(sys.argv)
     g = ConfigGUI()
     g.show()
     app.exec_()
-
-    # Check if the user clicked "Save & Run" or just closed the window ('X')
     if g.start_simulation:
         return g.config
     return None

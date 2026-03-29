@@ -8,44 +8,33 @@ from tqdm import tqdm
 
 class Dataset:
     def __init__(self, features_types):
-        self.n_features = len(features_types)
         self.features_types = features_types
         self.names = None
         self.exp_X = None
 
     def create_exp_data(self):
+        """Generates all possible combinations of features based on self.features_types."""
         features, names = [], []
-        for i in range(self.n_features):
-            samples = np.eye(self.features_types[i])
-            feature_labels = list(range(self.features_types[i]))
-            features.append(samples)
-            names.append(feature_labels)
+        for dim in self.features_types:
+            features.append(np.eye(dim))
+            names.append(list(range(dim)))
 
-        self.exp_X = torch.tensor(np.array([np.concatenate(combo) for combo in itertools.product(*features)])).float()
+        # Vectorized creation of the full experiment space
+        self.exp_X = torch.tensor(
+            np.array([np.concatenate(combo) for combo in itertools.product(*features)])).float()
         self.names = torch.tensor(list(itertools.product(*names))).float()
 
-    def classification_rule(self, shape_name, deciding_feature):
-        types = list(range(self.features_types[deciding_feature]))
-        threshold = len(types) // 2
-        return 1 if shape_name[deciding_feature] < threshold else 0
-
-    def get_block_data(self, zero_features, deciding_feature):
+    def get_block_data(self, zero_features, rule_func):
+        """Core data preparation: knows nothing about specific rule parameters."""
         X = self.exp_X.clone()
-        start_idx = 0
-        for i, dim in enumerate(self.features_types):
-            if i in zero_features:
-                X[:, start_idx: start_idx + dim] = 0.0
-            start_idx += dim
+        offsets = np.cumsum([0] + self.features_types)
+        for i in zero_features:
+            X[:, offsets[i]: offsets[i + 1]] = 0
 
-        labels = [self.classification_rule(name, deciding_feature) for name in self.names]
-        y = torch.tensor(labels)[:, None].float()
+        y = rule_func(self.names).view(-1, 1)
 
-        combined = torch.cat((X, y), dim=1).numpy()
-        _, unique_indices = np.unique(combined, axis=0, return_index=True)
-        unique_indices.sort()
-        block_X, block_y = X[unique_indices], y[unique_indices]
-
-        return block_X, block_y
+        unique_data = torch.unique(torch.cat((X, y), dim=1), dim=0)
+        return unique_data[:, :-1], unique_data[:, -1:]
 
 
 class MLP(nn.Module):

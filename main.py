@@ -1,8 +1,9 @@
 import os
 import json
 from simulation import Simulation
-from analysis import SimulationAnalyzer, IDR_check
+from analysis import SimulationAnalyzer
 from gui_app import launch_gui
+from dynamic_ranges import IDR_check
 
 CONFIG = {
     "exp_name": "test2",
@@ -18,60 +19,44 @@ CONFIG = {
     "activation_type": "Identity",
     "batch_size": 1,
     "seed": 0,
-    "sd": 0.5,
-    "exp_blocks": [{"block_name": "M1", "deciding_feature": 0, "zero_features": (), "epochs": 100}]
+    "sd": 0,
+    "exp_blocks": [{"block_name": "M1", "zero_features": (),"rule": "upper_half","deciding_feature":0, "epochs": 20},
+                   {"block_name": "M1", "zero_features": (), "rule": "parity", "feat_idx":0, "epochs": 20} ]
 }
 
 
 def run_simulation(config_source):
-    """
-    Retrieves the configuration from the specified source,
-    runs the simulation sequentially, and returns the SimulationAnalyzer object.
-    """
-    if config_source == "gui":
-        print("Launching GUI to build configuration...")
-        # The code halts here until the user closes the GUI
-        config = launch_gui()
-        if config is None:
-            print("GUI was closed without running the simulation.")
-            return None
+    match config_source:
+        case "gui": config = launch_gui()
+        case dict(): config = config_source
+        case str():
+            with open(f"configs/{config_source}.json", "r", encoding="utf-8") as f: config = json.load(f)
+        case _: raise ValueError("Invalid source. Use 'gui', a dict, or a filename.")
 
-    elif isinstance(config_source, dict):
-        print("Using provided configuration dictionary...")
-        config = config_source
-
-    elif isinstance(config_source, str):
-        print(f"Loading specific config from {config_source}...")
-        with open(os.path.join("configs", config_source+".json"), "r", encoding="utf-8") as f:
-            config = json.load(f)
-
-
-    else:
-        raise ValueError("Invalid source. Use 'gui', 'load', a 'filename.json', or a config dictionary.")
-
-    # ==========================================
-    # Run the Simulation & Create Analyzer
-    # ==========================================
-    print(f"\n--- Running Simulation: {config.get('exp_name', 'Unnamed')} ---")
-    results = Simulation(config).run()
-
-    analyzer = SimulationAnalyzer(results, config, save_figures=True)
-    return analyzer
+    return SimulationAnalyzer(Simulation(config).run(), config) if config else None
 
 
 if __name__ == '__main__':
     # Simulation Running
-    # s = run_simulation("gui")
+    s = run_simulation("gui")
     # s = run_simulation("test")
     # s = run_simulation(CONFIG)
     # s.plot_mae()
+    # s.plot_mae(sub_type="noisy")
+    # s.plot_mds(epoch=50)
+    s.plot_loss(sub_type="noisy")
+    # s.plot_accuracy(sub_type="noisy")
+    # s.plot_parameters_std()
 
-    DRs = IDR_check(sd=0,
-                    activation_type="Identity",
-                    w_scale_low=0.1,
-                    w_scale_high=50,
-                    b_scale_low=0,
-                    b_scale_high=0,
-                    epochs=25)
-    # DRs.plot_sigmoids(seed=0)
-    DRs.plot_histograms(10)
+
+
+    # drs = IDR_check(sd=0.5,
+    #                 activation_type="Identity",
+    #                 w_scale_low=0.1,
+    #                 w_scale_high=50,
+    #                 b_scale_low=0,
+    #                 b_scale_high=0,
+    #                 epochs=25)
+    #
+    # drs.plot_sigmoids(seed=0)
+    # drs.plot_histograms(10)
