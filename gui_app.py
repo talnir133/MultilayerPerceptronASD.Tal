@@ -1,7 +1,7 @@
 import sys, os, ast, json
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QPushButton, QSpinBox, QDoubleSpinBox, QComboBox, QLabel,
-                             QLineEdit, QGroupBox, QMessageBox, QFileDialog, QScrollArea, QFrame)
+                             QLineEdit, QGroupBox, QFileDialog, QScrollArea, QFrame)
 from PyQt5.QtCore import Qt
 
 DEFAULT_CONFIG = {
@@ -28,12 +28,12 @@ def get_latest_config():
 
 
 class ConfigGUI(QWidget):
-    def __init__(self, run_callback):
+    def __init__(self):
         super().__init__()
         self.config = get_latest_config()
-        self.run_callback = run_callback
         self.inputs = {}
         self.block_widgets = []
+        self.start_simulation = False  # Flag to indicate if the user clicked "Run"
         self.init_ui()
 
     def init_ui(self):
@@ -62,10 +62,11 @@ class ConfigGUI(QWidget):
         # --- 2. Set Network ---
         group2 = QGroupBox("2. Set Network")
         form2 = QFormLayout()
-        for k in ["hidden_size", "n_hidden", "output_size"]: self.add_spinbox(form2, k, self.config.get(k, 0))
-        for k in ["b_scale_low", "b_scale_high", "w_scale_low", "w_scale_high"]: self.add_double_spinbox(form2, k,
-                                                                                                         self.config.get(
-                                                                                                             k, 0.0))
+        for k in ["hidden_size", "n_hidden", "output_size"]:
+            self.add_spinbox(form2, k, self.config.get(k, 0))
+        for k in ["b_scale_low", "b_scale_high", "w_scale_low", "w_scale_high"]:
+            self.add_double_spinbox(form2, k, self.config.get(k, 0.0))
+
         self.add_combobox(form2, "optimizer_type", ["Adam", "SGD"], self.config.get("optimizer_type", "Adam"))
         self.add_combobox(form2, "activation_type", ["Tanh", "RelU", "Sigmoid", "Identity"],
                           self.config.get("activation_type", "Identity"))
@@ -109,36 +110,38 @@ class ConfigGUI(QWidget):
         self.populate_blocks()
 
     def add_spinbox(self, l, n, v, mx=1000):
-        w = QSpinBox();
-        w.setRange(0, mx);
-        w.setValue(v);
-        self.inputs[n] = w;
+        w = QSpinBox()
+        w.setRange(0, mx)
+        w.setValue(v)
+        self.inputs[n] = w
         l.addRow(n, w)
 
     def add_double_spinbox(self, l, n, v):
-        w = QDoubleSpinBox();
-        w.setRange(0.0, 100.0);
-        w.setSingleStep(0.1);
-        w.setValue(v);
-        self.inputs[n] = w;
+        w = QDoubleSpinBox()
+        w.setRange(0.0, 100.0)
+        w.setSingleStep(0.1)
+        w.setValue(v)
+        self.inputs[n] = w
         l.addRow(n, w)
 
     def add_combobox(self, l, n, o, d):
-        w = QComboBox();
-        w.addItems(o);
-        w.setCurrentText(d);
-        self.inputs[n] = w;
+        w = QComboBox()
+        w.addItems(o)
+        w.setCurrentText(d)
+        self.inputs[n] = w
         l.addRow(n, w)
 
     def add_line_edit(self, l, n, t):
-        w = QLineEdit(t);
-        self.inputs[n] = w;
+        w = QLineEdit(t)
+        self.inputs[n] = w
         l.addRow(n, w)
 
     def populate_blocks(self):
-        for w in self.block_widgets: w["row"].deleteLater()
+        for w in self.block_widgets:
+            w["row"].deleteLater()
         self.block_widgets.clear()
-        for s in self.config.get("exp_blocks", []): self.add_block_row(s)
+        for s in self.config.get("exp_blocks", []):
+            self.add_block_row(s)
         self.update_all_shapes()
 
     def add_block_row(self, data):
@@ -150,25 +153,26 @@ class ConfigGUI(QWidget):
         row_top = QHBoxLayout()
         name = QLineEdit(data.get("block_name", f"S{len(self.block_widgets) + 1}"))
         name.setFixedWidth(80)
-        ep = QSpinBox();
-        ep.setRange(1, 10000);
-        ep.setValue(data.get("epochs", 25));
+        ep = QSpinBox()
+        ep.setRange(1, 10000)
+        ep.setValue(data.get("epochs", 25))
         ep.setPrefix("Ep: ")
-        df = QSpinBox();
-        df.setRange(0, 10);
-        df.setValue(data.get("deciding_feature", 0));
+        df = QSpinBox()
+        df.setRange(0, 10)
+        df.setValue(data.get("deciding_feature", 0))
         df.setPrefix("Feat: ")
 
         zf_val = data.get("zero_features", [])
         zf_str = ",".join(map(str, zf_val)) if isinstance(zf_val, (list, tuple)) else str(zf_val)
-        zf = QLineEdit(zf_str);
+        zf = QLineEdit(zf_str)
         zf.setPlaceholderText("Zero Feats (e.g. 2)")
 
-        dl = QPushButton("❌");
+        dl = QPushButton("❌")
         dl.setFixedWidth(30)
         dl.setStyleSheet("background-color: transparent;")
 
-        for w in [name, ep, df, zf, dl]: row_top.addWidget(w)
+        for w in [name, ep, df, zf, dl]:
+            row_top.addWidget(w)
 
         shape_lbl = QLabel("")
         shape_lbl.setStyleSheet("color: #555; font-size: 11px; font-weight: bold; margin-top: 3px;")
@@ -181,21 +185,22 @@ class ConfigGUI(QWidget):
         self.sl.addWidget(row)
 
         dl.clicked.connect(lambda: self.remove_block(row, d))
-
         name.textChanged.connect(self.update_all_shapes)
         zf.textChanged.connect(self.update_all_shapes)
         self.update_all_shapes()
 
     def remove_block(self, r, d):
-        self.sl.removeWidget(r);
+        self.sl.removeWidget(r)
         r.deleteLater()
-        if d in self.block_widgets: self.block_widgets.remove(d)
+        if d in self.block_widgets:
+            self.block_widgets.remove(d)
         self.update_all_shapes()
 
     def parse_zf(self, text):
         res = []
         for x in text.replace('(', '').replace(')', '').split(","):
-            if x.strip().isdigit(): res.append(int(x.strip()))
+            if x.strip().isdigit():
+                res.append(int(x.strip()))
         return res
 
     def update_all_shapes(self):
@@ -239,11 +244,12 @@ class ConfigGUI(QWidget):
             self.populate_blocks()
 
     def on_run(self):
+        """Builds the final config dictionary, saves it, and closes the window."""
         for k, w in self.inputs.items():
             if isinstance(w, QSpinBox):
                 self.config[k] = w.value()
             elif isinstance(w, QDoubleSpinBox):
-                self.config[k] = round(w.value(), 4)  # 4 ספרות זה מעולה ל-SD ול-Scales
+                self.config[k] = round(w.value(), 4)
             elif isinstance(w, QComboBox):
                 self.config[k] = w.currentText()
             elif isinstance(w, QLineEdit):
@@ -259,25 +265,23 @@ class ConfigGUI(QWidget):
                                       "zero_features": self.parse_zf(w["zf"].text()), "epochs": w["ep"].value()} for w
                                      in self.block_widgets]
 
+        os.makedirs("configs", exist_ok=True)
         with open(f"configs/{self.config['exp_name']}.json", 'w') as f:
             json.dump(self.config, f, indent=4)
 
-        self.run_btn.setEnabled(False)
-        self.run_btn.setText("Running...")
-        QApplication.processEvents()
-
-        try:
-            self.run_callback(self.config)
-            QMessageBox.information(self, "Success", "Simulation finished and saved")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
-        finally:
-            self.run_btn.setEnabled(True)
-            self.run_btn.setText("💾 Save & Run Simulation")
+        # Signal that the user actually wants to run, and close the GUI
+        self.start_simulation = True
+        self.close()
 
 
-def launch_gui(cb):
+def launch_gui():
+    """Starts the GUI, blocks until closed, and returns the generated config (or None if cancelled)."""
     app = QApplication.instance() or QApplication(sys.argv)
-    g = ConfigGUI(cb)
+    g = ConfigGUI()
     g.show()
     app.exec_()
+
+    # Check if the user clicked "Save & Run" or just closed the window ('X')
+    if g.start_simulation:
+        return g.config
+    return None

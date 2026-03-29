@@ -43,7 +43,7 @@ class Dataset:
         combined = torch.cat((X, y), dim=1).numpy()
         _, unique_indices = np.unique(combined, axis=0, return_index=True)
         unique_indices.sort()
-        block_X, block_y = torch.tensor(X[unique_indices]), torch.tensor(y[unique_indices])
+        block_X, block_y = X[unique_indices], y[unique_indices]
 
         return block_X, block_y
 
@@ -105,10 +105,5 @@ def train_model(model, optimizer, X_base, y, epochs, batch_size, noise_sd, noise
             loss = criterion(model(inputs), labels)
             loss.backward()
             optimizer.step()
-
-    with torch.no_grad():
-        y_pred = model(X_base)
-        test_loss = criterion(y_pred, y)
-        print(f'Final Loss (on Base Data): {test_loss.item():.4f}')
 
     return model, optimizer
