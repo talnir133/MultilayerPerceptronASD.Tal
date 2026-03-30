@@ -20,8 +20,8 @@ class Simulation:
         torch.manual_seed(self.global_config["seed"])
         np.random.seed(self.global_config["seed"])
 
-    def run(self):
-
+    def run(self, track_metrics=True):
+        self.track_metrics = track_metrics
         simulation_results = []
         optimizers, models = {"low": None, "high": None}, {"low": None, "high": None}
         for block in self.global_config["exp_blocks"]:
@@ -64,7 +64,7 @@ class Simulation:
             models["low"], optimizers["low"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_low, cfg, X, y)
+            metric_callback=get_metric_callback(data_low, cfg, X, y) if self.track_metrics else lambda m, x, c: None
         )
 
         # ==========================================
@@ -86,7 +86,7 @@ class Simulation:
             models["high"], optimizers["high"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_high, cfg, X, y),
+            metric_callback=get_metric_callback(data_low, cfg, X, y) if self.track_metrics else lambda m, x, c: None
         )
 
         # --- Final loss computation---
