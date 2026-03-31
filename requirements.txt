@@ -1,9 +1,0 @@
-torch
-numpy
-pandas
-matplotlib
-scipy
-scikit-learn
-seaborn
-tqdm
-plotly
