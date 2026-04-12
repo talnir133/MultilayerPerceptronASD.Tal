@@ -32,7 +32,7 @@ class IDR_check:
         self.b_l, self.b_h = b_scale_low, b_scale_high
 
         self.config = {
-            "exp_name": "idr_check", "features_types": [2], "hidden_size": 30, "n_hidden": 0, "output_size": 1,
+            "exp_name": "idr_check", "features_types": [2], "hidden_size": 30, "n_hidden": 1,
             "b_scale_low": self.b_l, "b_scale_high": self.b_h, "w_scale_low": self.w_l, "w_scale_high": self.w_h,
             "optimizer_type": self.opt_type, "activation_type": self.act_type, "batch_size": 1,
             "seed": self.seed, "sd": self.sd,

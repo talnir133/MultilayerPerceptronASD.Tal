@@ -86,7 +86,7 @@ class Simulation:
             models["high"], optimizers["high"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_low, cfg, X, y) if self.track_metrics else lambda m, x, c: None
+            metric_callback=get_metric_callback(data_high, cfg, X, y) if self.track_metrics else lambda m, x, c: None
         )
 
         # --- Final loss computation---

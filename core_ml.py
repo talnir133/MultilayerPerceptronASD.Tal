@@ -47,14 +47,18 @@ class MLP(nn.Module):
         self.b_scale = b_scale
         self._layers = nn.Sequential()
 
-        self._layers.add_module('fc1', nn.Linear(input_size, hidden_size, bias=bool(b_scale)))
-        self._layers.add_module('activation_func1', activation_type)
+        if n_hidden <= 0:
+            self._layers.add_module('fc_last', nn.Linear(input_size, output_size, bias=bool(b_scale)))
 
-        for i in range(n_hidden):
-            self._layers.add_module(f'fc{i + 2}', nn.Linear(hidden_size, hidden_size, bias=bool(b_scale)))
-            self._layers.add_module(f'activation_func{i + 2}', activation_type)
+        else:
+            self._layers.add_module('fc1', nn.Linear(input_size, hidden_size, bias=bool(b_scale)))
+            self._layers.add_module('activation_func1', activation_type)
 
-        self._layers.add_module('fc_last', nn.Linear(hidden_size, output_size, bias=bool(b_scale)))
+            for i in range(n_hidden - 1):
+                self._layers.add_module(f'fc{i + 2}', nn.Linear(hidden_size, hidden_size, bias=bool(b_scale)))
+                self._layers.add_module(f'activation_func{i + 2}', activation_type)
+
+            self._layers.add_module('fc_last', nn.Linear(hidden_size, output_size, bias=bool(b_scale)))
 
     def forward(self, x):
         """Standard forward pass through the network."""

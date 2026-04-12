@@ -53,7 +53,7 @@ class SimulationAnalyzer:
 
         categories = {
             "Input:": ['features_types', 'seed', 'sd'],
-            "Network:": ['hidden_size', 'n_hidden', 'output_size', 'b_scale_low', 'b_scale_high',
+            "Network:": ['hidden_size', 'n_hidden', 'b_scale_low', 'b_scale_high',
                          'w_scale_low', 'w_scale_high', 'optimizer_type', 'activation_type', 'batch_size']
         }
 
