@@ -6,7 +6,7 @@ from dynamic_ranges import IDR_check
 
 CONFIG = {
     "exp_name": "test2",
-    "features_types": [4,4],
+    "features_types": [2,2],
     "hidden_size": 30,
     "n_hidden": 1,
     "b_scale_low": 0,
