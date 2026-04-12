@@ -38,11 +38,11 @@ if __name__ == '__main__':
     # s = run_simulation("gui")
     # s = run_simulation("test")
     s = run_simulation(CONFIG)
-    # s.plot_mae()
+    s.plot_mae()
     s.plot_mae(sub_type="noisy")
-    # s.plot_mds(20)
+    # s.plot_mds(5)
     # s.plot_loss(sub_type="noisy")
-    s.plot_accuracy(sub_type="noisy")
+    # s.plot_accuracy(sub_type="noisy")
     # s.plot_parameters_std()
     #
     # drs = IDR_check(sd=0.5,

@@ -1,21 +1,15 @@
 import json
-from scipy.spatial.distance import squareform
-from sklearn.manifold import MDS
 import os
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
-import warnings
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
+from scipy.spatial.distance import squareform
+from sklearn.manifold import MDS
 
+warnings.filterwarnings("ignore")
 
 
 class SimulationAnalyzer:
-    """
-    Analyzes and visualizes simulation results.
-    Handles automatic directory creation and configuration saving upon initialization.
-    """
-
     def __init__(self, results, config, save_figures=True):
         self.results = results
         self.config = config
@@ -23,7 +17,6 @@ class SimulationAnalyzer:
         self.exp_name = config.get("exp_name", "Experiment")
         self.save_dir = f"figures/{self.exp_name}"
 
-        # Automatic directory creation and config dumping
         if self.save_figures:
             os.makedirs(self.save_dir, exist_ok=True)
             config_path = os.path.join(self.save_dir, "config.json")
@@ -31,7 +24,6 @@ class SimulationAnalyzer:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
 
     def _save_fig(self, base_name):
-        """Saves a figure with an auto-incrementing suffix to avoid overwriting."""
         if not self.save_figures:
             return
 
@@ -44,7 +36,6 @@ class SimulationAnalyzer:
         plt.savefig(file_path, bbox_inches='tight', dpi=300)
 
     def _add_config_info(self, ax, show_config=True):
-        """Overlays the experiment configuration details on the plot."""
         if not show_config:
             return
 
@@ -80,8 +71,8 @@ class SimulationAnalyzer:
 
         ax.text(1.05, 0.985, txt.strip(), transform=ax.transAxes, fontsize=7, va='top',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
+
     def _plot_metric_on_ax(self, ax, metric_name, ylabel, log_scale=False):
-        """Core plotting engine for tracking metrics across continuous blocks."""
         low, high, opt, bounds, blocks = [], [], [], [0], []
 
         for name, res in self.results:
@@ -116,7 +107,6 @@ class SimulationAnalyzer:
         ax.grid(True, which="both", ls="-", alpha=0.5)
 
     def _graph_template(self, metric_key, y_axis_name, log_scale=False, show_config=True):
-        """Standardizes the layout for single-metric plots."""
         fig, ax = plt.subplots(figsize=(10, 6))
         plt.subplots_adjust(right=0.65, bottom=0.15)
 
@@ -130,14 +120,22 @@ class SimulationAnalyzer:
         self._save_fig(f"{metric_key}_figure_{self.exp_name.replace(' ', '_')}")
         plt.show()
 
+    def _plot_standard_metric(self, metric_base, title_base, sub_type="clean", log_scale=False, show_config=True):
+        sd = self.config.get("sd", 0)
+        actual_sub_type = "clean" if sd == 0 else sub_type
+        y_axis_name = title_base if sd == 0 else f"{title_base} (on {actual_sub_type} data)"
+        metric_key = f"{metric_base}_{actual_sub_type}"
+
+        self._graph_template(metric_key, y_axis_name, log_scale, show_config)
+
     def plot_loss(self, sub_type="clean", log_scale=False, show_config=True):
-        self._graph_template(f"losses_{sub_type}", f"{sub_type.capitalize()} BCE Loss", log_scale, show_config)
+        self._plot_standard_metric("losses", "BCE Loss", sub_type, log_scale, show_config)
 
     def plot_accuracy(self, sub_type="clean", show_config=True):
-        self._graph_template(f"accuracies_{sub_type}", f"{sub_type.capitalize()} Accuracy", False, show_config)
+        self._plot_standard_metric("accuracies", "Accuracy", sub_type, False, show_config)
 
     def plot_mae(self, sub_type="clean", show_config=True):
-        self._graph_template(f"MAE_{sub_type}", f"{sub_type.capitalize()} Mean Absolute Error", False, show_config)
+        self._plot_standard_metric("MAE", "Mean Absolute Error", sub_type, False, show_config)
 
     def plot_parameters_std(self, layer_name="fc1", show_config=True):
         fig, axs = plt.subplots(1, 2, figsize=(14, 6))
@@ -171,13 +169,13 @@ class SimulationAnalyzer:
             current_epoch += n_epochs
 
         if target_res is None:
-            print(f"Epoch {epoch} not found in results.")
             return
 
         dist_mat = squareform(target_res["activation_distances_clean"][rel_epoch][layer_name])
-        coords = MDS(n_components=2, metric='precomputed', random_state=42, n_init=4, init='random').fit_transform(dist_mat)
+        coords = MDS(n_components=2, metric='precomputed', random_state=42, n_init=4, init='random').fit_transform(
+            dist_mat)
 
-        y = target_res["y"][:,0].cpu().numpy().flatten()
+        y = target_res["y"][:, 0].cpu().numpy().flatten()
         X = target_res["X"].cpu().numpy()
 
         plt.figure(figsize=(9, 7))
