@@ -40,7 +40,7 @@ if __name__ == '__main__':
     s = run_simulation(CONFIG)
     # s.plot_mae()
     # s.plot_mae(sub_type="noisy")
-    s.plot_mds((5, 10, 15))
+    s.plot_mds((0,5))
     # s.plot_loss(sub_type="noisy")
     # s.plot_accuracy(sub_type="noisy")
     # s.plot_parameters_std()

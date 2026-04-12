@@ -177,7 +177,7 @@ class SimulationAnalyzer:
                 if t_res is None:
                     ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red', fontsize=12); ax.axis('off'); continue
                 dist_mat = squareform(t_res["activation_distances_clean"][rel_ep][layer_name])
-                coords = MDS(n_components=2, metric='precomputed', random_state=42, n_init=4).fit_transform(dist_mat)
+                coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(dist_mat)
                 scatter = ax.scatter(coords[:, 0], coords[:, 1], c=t_res["y"][:, 0].cpu().numpy().flatten(), cmap='coolwarm', s=100, edgecolors='gray', alpha=0.85)
                 scatter_ref = scatter if scatter_ref is None else scatter_ref
                 ft, zf = self.config["features_types"], t_cfg.get("zero_features", [])
