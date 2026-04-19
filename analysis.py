@@ -180,7 +180,7 @@ class SimulationAnalyzer:
         ax.grid(True, which="both", ls="-", alpha=0.5)
 
     def _graph_template(self, metric_key, y_axis_name, log_scale=False, show_config=True):
-        fig, ax = plt.subplots(figsize=(15, 6))
+        fig, ax = plt.subplots(figsize=(15, 8))
         plt.subplots_adjust(right=0.65, bottom=0.15)
 
         self._plot_metric_on_ax(ax, metric_key, y_axis_name, log_scale)
@@ -292,53 +292,89 @@ class SimulationAnalyzer:
             self._save_fig(f"MDS_grid_{layer_name}_{target_env}_eps_{'_'.join(map(str, epochs))}")
             plt.show()
 
+
         elif mode == 'animation':
+
             from matplotlib import animation
+
+            from IPython.display import display, HTML  # ייבוא הכרחי ל-Colab
+
             fig, axs = plt.subplots(1, 2, figsize=(14, 7))
+
             model_types, titles = ['low', 'high'], ['Low Variance (RichMLP)', 'High Variance (LazyMLP)']
+
             plt.subplots_adjust(wspace=0.2)
 
             def update(frame_idx):
+
                 epoch = epochs[frame_idx]
+
                 for idx, ax in enumerate(axs):
+
                     ax.clear()
+
                     m_type = model_types[idx]
+
                     t_block, t_res, rel_ep, cur_ep = None, None, 0, 0
+
                     for b_name, b_res in self.results:
+
                         n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"][target_env])
+
                         if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
                             t_block, t_res, rel_ep = b_name, b_res[f"data_{m_type}"], (n_eps - 1) if epoch == -1 else (
-                                        epoch - cur_ep)
+
+                                    epoch - cur_ep)
+
                             break
+
                         cur_ep += n_eps
+
                     if t_res is None:
                         ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red',
+
                                 fontsize=12)
+
                         ax.axis('off')
+
                         continue
 
                     dist_mat = squareform(t_res["activation_distances_clean"][target_env][rel_ep][layer_name])
+
                     coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
+
                         dist_mat)
+
                     env_X = t_res["envs_data"][target_env]["X"]
 
                     ax.scatter(coords[:, 0], coords[:, 1], color='#85C1E9', s=130, edgecolors='#1B4F72', alpha=0.85)
+
                     ft = self.config["features_types"]
+
                     for i, coord in enumerate(coords):
+
                         f_str, s_idx = [], 0
+
                         for dim in ft:
                             feat_slice = env_X[i][s_idx:s_idx + dim]
+
                             f_str.append("-" if np.sum(feat_slice) == 0 else str(np.argmax(feat_slice)))
+
                             s_idx += dim
+
                         ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
+
                                     fontsize=9, fontweight='bold', color='#444444')
+
                     ax.margins(0.15)
+
                     ax.grid(True, linestyle='--', alpha=0.5)
+
                     ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch == -1 else epoch} | Block: {t_block}",
+
                                  fontweight='bold', fontsize=13)
 
-            fig.suptitle(
-                f"MDS Dynamic Evolution: '{layer_name}' ({self.exp_name.capitalize()})\nEvaluated on Environment: {target_env}",
-                fontweight='bold', fontsize=16)
             self.anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=800, repeat=True)
-            plt.show()
+
+            plt.close(fig)
+            display(HTML(self.anim.to_jshtml()))
