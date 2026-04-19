@@ -35,6 +35,14 @@ class SimulationAnalyzer:
 
         plt.savefig(file_path, bbox_inches='tight', dpi=300)
 
+    def _get_signatures(self, b_cfg):
+        """Helper to identify domains and rules just like the simulation does."""
+        zf = b_cfg.get("zero_features", [])
+        zf_list = list(zf) if isinstance(zf, (list, tuple)) else ([zf] if zf is not None else [])
+        domain_sig = f"Domain(Zero:{','.join(map(str, sorted(zf_list))) or 'None'})"
+        rule_sig = f"{b_cfg.get('rule')}_{b_cfg.get('deciding_feature', '')}"
+        return domain_sig, rule_sig
+
     def _add_config_info(self, ax, show_config=True):
         if not show_config:
             return
@@ -59,7 +67,8 @@ class SimulationAnalyzer:
         txt += "Experiment Blocks:\n"
         for idx, block in enumerate(cfg.get('exp_blocks', []), 1):
             zf = block.get('zero_features', [])
-            zf_str = "None" if not zf else (",".join(map(str, zf)) if isinstance(zf, (list, tuple)) else str(zf))
+            zf_str = "None" if not zf and zf != 0 else (
+                ",".join(map(str, zf)) if isinstance(zf, (list, tuple)) else str(zf))
             rule_name = block.get('rule', 'upper_half')
             a_class = block.get('alpha_class', 1)
             a_rec = block.get('alpha_rec', 0)
@@ -78,6 +87,28 @@ class SimulationAnalyzer:
         sample_metric = self.results[0][1]["data_low"].get(metric_name)
         is_env_based = isinstance(sample_metric, dict)
         bounds, blocks = [0], []
+
+        # -- Shift Detection Logic (Synced with Global Shift) --
+        shift_indices = set()
+        active_rules = {}
+        for i in range(len(self.results)):
+            b_cfg = self.results[i][1]["config"]
+            domain_sig, rule_sig = self._get_signatures(b_cfg)
+
+            if domain_sig not in active_rules:
+                active_rules[domain_sig] = rule_sig
+            elif active_rules[domain_sig] != rule_sig:
+                # Global shift triggered! Mark this index.
+                shift_indices.add(i)
+
+                # Fast-forward update for all domains to prevent multiple lines
+                for target_d_sig in active_rules.keys():
+                    for j in range(i, len(self.results)):
+                        fut_cfg = self.results[j][1]["config"]
+                        fut_d_sig, fut_r_sig = self._get_signatures(fut_cfg)
+                        if fut_d_sig == target_d_sig:
+                            active_rules[target_d_sig] = fut_r_sig
+                            break
 
         if not is_env_based:
             low, high = [], []
@@ -124,15 +155,20 @@ class SimulationAnalyzer:
                     rgb_low = np.array(mcolors.to_rgb(c_low))
                     rgb_high = np.array(mcolors.to_rgb(c_high))
                     c_avg = tuple((rgb_low + rgb_high) / 2.0)
-
                     ax.plot(env_data_opt[env], label=f'Bayes Opt ({env})', color=c_avg, alpha=0.6, linestyle='--',
                             linewidth=1.5)
 
-        x_offset = bounds[-1] * 0.02
+        # Drawing the block separators and delicate shift annotations
+        x_offset = bounds[-1] * 0.015
         for i in range(1, len(bounds) - 1):
-            ax.axvline(x=bounds[i], color='gray', linestyle='--', linewidth=1)
-            ax.text(bounds[i] - x_offset, sum(ax.get_ylim()) / 2, 'Block Shift', color='gray', fontsize=9, rotation=90,
-                    va='center', ha='right')
+            if i in shift_indices:
+                # Delicate gray line and text for the SHIFT
+                ax.axvline(x=bounds[i], color='#888888', linestyle='--', linewidth=1.5)
+                ax.text(bounds[i] - x_offset, sum(ax.get_ylim()) / 2, 'Rules Shift',
+                        color='#888888', fontsize=10, rotation=90, va='center', ha='right', fontweight='normal')
+            else:
+                # Faint line without text for regular blocks
+                ax.axvline(x=bounds[i], color='gray', linestyle='--', linewidth=1, alpha=0.7)
 
         for i in range(len(blocks)):
             ax.text((bounds[i] + bounds[i + 1]) / 2, -0.06, blocks[i], transform=ax.get_xaxis_transform(), ha='center',
@@ -203,7 +239,6 @@ class SimulationAnalyzer:
             fig, axs = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 10))
             if n_cols == 1: axs = axs.reshape(n_rows, 1)
             plt.subplots_adjust(right=0.65, wspace=0.3, hspace=0.3)
-            scatter_ref = None
 
             for row_idx, (m_type, r_title) in enumerate(zip(model_types, row_titles)):
                 for col_idx, epoch in enumerate(epochs):
@@ -213,24 +248,21 @@ class SimulationAnalyzer:
                         n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"][target_env])
                         if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
                             t_block, t_res, rel_ep = b_name, b_res[f"data_{m_type}"], (n_eps - 1) if epoch == -1 else (
-                                        epoch - cur_ep)
+                                    epoch - cur_ep)
                             break
                         cur_ep += n_eps
                     if t_res is None:
                         ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red',
-                                fontsize=12);
-                        ax.axis('off');
+                                fontsize=12)
+                        ax.axis('off')
                         continue
 
                     dist_mat = squareform(t_res["activation_distances_clean"][target_env][rel_ep][layer_name])
                     coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
                         dist_mat)
-                    env_y = t_res["envs_data"][target_env]["y"].flatten()
                     env_X = t_res["envs_data"][target_env]["X"]
 
-                    scatter = ax.scatter(coords[:, 0], coords[:, 1], c=env_y, cmap='coolwarm', s=100, edgecolors='gray',
-                                         alpha=0.85)
-                    scatter_ref = scatter if scatter_ref is None else scatter_ref
+                    ax.scatter(coords[:, 0], coords[:, 1], color='#85C1E9', s=100, edgecolors='#1B4F72', alpha=0.85)
                     ft = self.config["features_types"]
                     for i, coord in enumerate(coords):
                         f_str, s_idx = [], 0
@@ -240,7 +272,7 @@ class SimulationAnalyzer:
                             s_idx += dim
                         ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
                                     fontsize=8, fontweight='bold', color='#444444')
-                    ax.margins(0.15);
+                    ax.margins(0.15)
                     ax.grid(True, linestyle='--', alpha=0.5)
                     if row_idx == 0: ax.set_title(
                         f"Epoch: {'Last' if epoch == -1 else epoch}" + (f"\nBlock: {t_block}" if n_blks > 1 else ""),
@@ -253,17 +285,11 @@ class SimulationAnalyzer:
                 g_top = fig.add_axes([p_top.x0 + shift, p_top.y0, p_top.width, p_top.height])
                 g_top.axis('off')
                 self._add_config_info(g_top, show_config)
-                if scatter_ref:
-                    p_bot = axs[1, -1].get_position()
-                    g_bot = fig.add_axes([p_bot.x0 + shift, p_bot.y0, p_bot.width, p_bot.height])
-                    g_bot.axis('off')
-                    g_bot.legend(*scatter_ref.legend_elements(), title="True Categories", loc='upper left',
-                                 bbox_to_anchor=(1.05, 1.0), fontsize=11, title_fontsize=12)
 
             fig.suptitle(
                 f"MDS Evolution of '{layer_name}' Activations in {self.exp_name.capitalize()}\nEvaluated on Environment: {target_env}",
                 fontweight='bold', fontsize=18, y=1.02)
-            self._save_fig(f"MDS_grid_{layer_name}_{target_env}_eps_{'_'.join(map(str, epochs))}");
+            self._save_fig(f"MDS_grid_{layer_name}_{target_env}_eps_{'_'.join(map(str, epochs))}")
             plt.show()
 
         elif mode == 'animation':
@@ -287,18 +313,16 @@ class SimulationAnalyzer:
                         cur_ep += n_eps
                     if t_res is None:
                         ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red',
-                                fontsize=12);
-                        ax.axis('off');
+                                fontsize=12)
+                        ax.axis('off')
                         continue
 
                     dist_mat = squareform(t_res["activation_distances_clean"][target_env][rel_ep][layer_name])
                     coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
                         dist_mat)
-                    env_y = t_res["envs_data"][target_env]["y"].flatten()
                     env_X = t_res["envs_data"][target_env]["X"]
 
-                    ax.scatter(coords[:, 0], coords[:, 1], c=env_y, cmap='coolwarm', s=130, edgecolors='gray',
-                               alpha=0.85)
+                    ax.scatter(coords[:, 0], coords[:, 1], color='#85C1E9', s=130, edgecolors='#1B4F72', alpha=0.85)
                     ft = self.config["features_types"]
                     for i, coord in enumerate(coords):
                         f_str, s_idx = [], 0
@@ -308,7 +332,7 @@ class SimulationAnalyzer:
                             s_idx += dim
                         ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
                                     fontsize=9, fontweight='bold', color='#444444')
-                    ax.margins(0.15);
+                    ax.margins(0.15)
                     ax.grid(True, linestyle='--', alpha=0.5)
                     ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch == -1 else epoch} | Block: {t_block}",
                                  fontweight='bold', fontsize=13)

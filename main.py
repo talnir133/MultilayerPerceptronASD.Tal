@@ -16,12 +16,16 @@ CONFIG = {
     "optimizer_type": "Adam",
     "activation_type": "Identity",
     "batch_size": 1,
-    "lr" : 0.004,
+    "lr" : 0.001,
     "seed": 0,
-    "sd": 0,
-    "exp_blocks": [{"block_name": "b1", "zero_features": (2,3),"rule": "upper_half","deciding_feature":0, "epochs": 20, "alpha_class": 1, "alpha_rec": 0},
-                   {"block_name": "b2", "zero_features": (0,1),"rule": "upper_half","deciding_feature":2, "epochs": 20, "alpha_class": 1, "alpha_rec": 0}]
-}
+    "sd": 0.2,
+     "exp_blocks": [
+        {"block_name": "M1", "rule": "upper_half", "zero_features": (2, 3), "epochs": 5, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0},
+        {"block_name": "M2", "rule": "upper_half", "zero_features": (0, 1), "epochs": 5, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 2},
+        {"block_name": "M1", "rule": "upper_half", "zero_features": (2, 3), "epochs": 5, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0},
+        {"block_name": "M2-Flex", "rule": "upper_half", "zero_features": (0, 1), "epochs": 5, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 3},
+        {"block_name": "M1-Flex", "rule": "upper_half", "zero_features": (2, 3), "epochs": 5, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 1}
+    ]}
 
 
 def run_simulation(config_source):
@@ -44,7 +48,7 @@ if __name__ == '__main__':
     s.plot_mae(sub_type="noisy")
     s.plot_mds((0,2,21), mode='static')
     # s.plot_loss(sub_type="noisy")
-    # s.plot_accuracy(sub_type="noisy")
+    s.plot_accuracy(sub_type="noisy")
     # s.plot_parameters_std()
     #
     # drs = IDR_check(sd=0.5,

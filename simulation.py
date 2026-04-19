@@ -11,6 +11,7 @@ from classification_rules import RULES_REGISTRY
 
 class Simulation:
     def __init__(self, config):
+        self.active_rules = None
         self.track_metrics = None
         self.global_config = copy.deepcopy(config)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -25,21 +26,24 @@ class Simulation:
         self.track_metrics = track_metrics
         simulation_results = []
         optimizers, models = {"low": None, "high": None}, {"low": None, "high": None}
-        test_envs = self._setup_test_environments()
+        test_envs = {}
 
-        for block in self.global_config["exp_blocks"]:
+        for i, block in enumerate(self.global_config["exp_blocks"]):
             block_config = self.get_block_configs(block)
+            self._sync_environments(i, block_config, test_envs)
             block_results = self.run_block(models, optimizers, block_config, test_envs)
+            
             models["low"], models["high"] = block_results["model_low"], block_results["model_high"]
             optimizers["low"], optimizers["high"] = block_results["optimizer_low"], block_results["optimizer_high"]
             simulation_results.append([block_config["block_name"], block_results])
+
         return simulation_results
 
     def run_block(self, models, optimizers, cfg, test_envs):
         print(f"\n--- Running Block: {cfg['block_name']} ---")
         rule_name = cfg.get("rule", "upper_half")
         rule_to_apply = partial(RULES_REGISTRY[rule_name], **cfg)
-        X, y = self.dataset.get_block_data(cfg["zero_features"], rule_to_apply)
+        X, y = self.dataset.get_block_data(cfg.get("zero_features", []), rule_to_apply)
         X, y = X.to(self.device), y.to(self.device)
         noise_mask = get_noise_mask(cfg, X).to(self.device)
 
@@ -66,7 +70,8 @@ class Simulation:
             models["low"], optimizers["low"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_low, cfg, test_envs) if self.track_metrics else lambda m, x, c: None
+            metric_callback=get_metric_callback(data_low, cfg, test_envs) if self.track_metrics else lambda m, x,
+                                                                                                            c: None
         )
 
         # ==========================================
@@ -89,7 +94,8 @@ class Simulation:
             models["high"], optimizers["high"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_high, cfg, test_envs) if self.track_metrics else lambda m, x, c: None
+            metric_callback=get_metric_callback(data_high, cfg, test_envs) if self.track_metrics else lambda m, x,
+                                                                                                             c: None
         )
 
         return {
@@ -112,47 +118,78 @@ class Simulation:
         act_map = {
             "Tanh": nn.Tanh, "RelU": nn.ReLU,
             "Sigmoid": nn.Sigmoid, "Identity": nn.Identity
-
         }
         block_config["activation_type"] = act_map.get(block_config["activation_type"], nn.Identity)()
 
         return block_config
 
-    def _setup_test_environments(self):
-        test_envs = {}
-        all_combined_data = []
+    def _sync_environments(self, current_idx, current_cfg, test_envs):
+        # Phase 1: Initial Setup
+        if not test_envs:
+            self.active_rules = {}
+            for block in self.global_config["exp_blocks"]:
+                b_cfg = self.get_block_configs(block)
+                domain_sig, rule_sig = self._get_signatures(b_cfg)
 
-        for block in self.global_config["exp_blocks"]:
-            b_name = block["block_name"]
-            if b_name in test_envs:
-                continue
+                if domain_sig not in test_envs:
+                    r_func = partial(RULES_REGISTRY[b_cfg["rule"]], **b_cfg)
+                    X_test, y_test = self.dataset.get_block_data(b_cfg["zero_features"], r_func)
 
-            b_cfg = self.get_block_configs(block)
-            r_func = partial(RULES_REGISTRY[b_cfg.get("rule", "upper_half")], **b_cfg)
-            X_test, y_test = self.dataset.get_block_data(b_cfg["zero_features"], r_func)
+                    test_envs[domain_sig] = {
+                        "X": X_test.to(self.device),
+                        "y": y_test[:, 0:1].to(self.device),
+                        "mask": get_noise_mask(b_cfg, X_test).to(self.device)
+                    }
+                    self.active_rules[domain_sig] = rule_sig
 
-            X_test = X_test.to(self.device)
-            y_test = y_test[:, 0:1].to(self.device)
+            self._update_combined_env(test_envs)
+            return
 
-            test_envs[b_name] = {
-                "X": X_test,
-                "y": y_test,
-                "mask": get_noise_mask(b_cfg, X_test).to(self.device)
-            }
+        # Phase 2: Shift Detection & Update
+        domain_sig, rule_sig = self._get_signatures(current_cfg)
 
-            all_combined_data.append(torch.cat((X_test, y_test), dim=1))
+        if rule_sig == self.active_rules.get(domain_sig, rule_sig):
+            return
 
-        if all_combined_data:
-            comb_data = torch.unique(torch.cat(all_combined_data, dim=0), dim=0)
-            D = comb_data.shape[1] - 1
+        print(f"\n[!!!] GLOBAL SHIFT TRIGGERED AT BLOCK '{current_cfg['block_name']}' [!!!]")
+        domains_to_update = [k for k in test_envs.keys() if k != "Combined"]
 
+        for d_sig in domains_to_update:
+            for i in range(current_idx, len(self.global_config["exp_blocks"])):
+                b_cfg = self.get_block_configs(self.global_config["exp_blocks"][i])
+                loop_d_sig, loop_r_sig = self._get_signatures(b_cfg)
+
+                if loop_d_sig == d_sig:
+                    r_func = partial(RULES_REGISTRY[b_cfg.get("rule", "upper_half")], **b_cfg)
+                    _, y_test = self.dataset.get_block_data(b_cfg.get("zero_features", []), r_func)
+
+                    test_envs[d_sig]["y"] = y_test[:, 0:1].to(self.device)
+                    self.active_rules[d_sig] = loop_r_sig
+                    break
+
+        self._update_combined_env(test_envs)
+
+    def _update_combined_env(self, test_envs):
+        all_X, all_y = [], []
+        for k, env in test_envs.items():
+            if k != "Combined":
+                all_X.append(env["X"])
+                all_y.append(env["y"])
+
+        if all_X:
+            comb_data = torch.unique(torch.cat((torch.cat(all_X, dim=0), torch.cat(all_y, dim=0)), dim=1), dim=0)
+            D = all_X[0].shape[1]
             test_envs["Combined"] = {
                 "X": comb_data[:, :D],
                 "y": comb_data[:, D:],
                 "mask": torch.ones_like(comb_data[:, :D])
             }
 
-        return test_envs
+    def _get_signatures(self, b_cfg):
+        zf = b_cfg.get("zero_features", [])
+        domain_sig = f"Domain(Zero:{','.join(map(str, sorted(zf))) or 'None'})"
+        rule_sig = f"{b_cfg.get('rule')}_{b_cfg.get('deciding_feature', '')}"
+        return domain_sig, rule_sig
 
 
 # ==========================================
@@ -160,7 +197,7 @@ class Simulation:
 # ==========================================
 
 def get_noise_mask(block_config, X):
-    #  creating a mask to apply noise only to non-zeroed features
+    # creating a mask to apply noise only to non-zeroed features
     noise_mask = torch.ones_like(X)
     zero_feats = block_config.get("zero_features", [])
     features_types = block_config.get("features_types", [])
@@ -178,7 +215,8 @@ def create_tracker(test_envs, X_train, y_train):
     tracker = {
         "noised_data": [], "fc1_weight_sd": [], "fc1_bias_sd": [],
         "X_train": X_train, "y_train": y_train,
-        "envs_data": {env: {"X": data["X"].cpu().numpy(), "y": data["y"].cpu().numpy()} for env, data in test_envs.items()}
+        "envs_data": {env: {"X": data["X"].cpu().numpy(), "y": data["y"].cpu().numpy()} for env, data in
+                      test_envs.items()}
     }
     metrics = [
         "losses_clean", "MAE_clean", "accuracies_clean",
@@ -190,6 +228,7 @@ def create_tracker(test_envs, X_train, y_train):
     for m in metrics:
         tracker[m] = {env: [] for env in test_envs.keys()}
     return tracker
+
 
 def get_metric_callback(tracker, cfg, test_envs):
     global_sd = cfg.get("sd", 0)
@@ -214,7 +253,8 @@ def get_metric_callback(tracker, cfg, test_envs):
             clean_preds = current_model(X_env)[:, 0:1]
             tracker["losses_clean"][env_name].append(loss_criterion(clean_preds, y_env).item())
             tracker["MAE_clean"][env_name].append(torch.abs(torch.sigmoid(clean_preds) - y_env).mean().item())
-            tracker["accuracies_clean"][env_name].append(((torch.sigmoid(clean_preds) > 0.5) == y_env.bool()).float().mean().item())
+            tracker["accuracies_clean"][env_name].append(
+                ((torch.sigmoid(clean_preds) > 0.5) == y_env.bool()).float().mean().item())
 
             if global_sd > 0:
                 X_noisy_env = X_env + (torch.randn_like(X_env) * global_sd * env_data["mask"])
@@ -224,31 +264,29 @@ def get_metric_callback(tracker, cfg, test_envs):
 
                 tracker["losses_noisy"][env_name].append(loss_criterion(noisy_preds, y_env).item())
                 tracker["MAE_noisy"][env_name].append(torch.abs(model_probs - y_env).mean().item())
-                tracker["accuracies_noisy"][env_name].append(((model_probs > 0.5) == y_env.bool()).float().mean().item())
+                tracker["accuracies_noisy"][env_name].append(
+                    ((model_probs > 0.5) == y_env.bool()).float().mean().item())
                 tracker["MAE_noisy_optimal"][env_name].append(torch.abs(opt_probs - y_env).mean().item())
-                tracker["accuracies_noisy_optimal"][env_name].append(((opt_probs > 0.5) == y_env.bool()).float().mean().item())
+                tracker["accuracies_noisy_optimal"][env_name].append(
+                    ((opt_probs > 0.5) == y_env.bool()).float().mean().item())
                 tracker["MAE_to_optimal"][env_name].append(torch.abs(model_probs - opt_probs).mean().item())
-                tracker["accuracies_to_optimal"][env_name].append(((model_probs > 0.5) == (opt_probs > 0.5)).float().mean().item())
+                tracker["accuracies_to_optimal"][env_name].append(
+                    ((model_probs > 0.5) == (opt_probs > 0.5)).float().mean().item())
 
     return callback
+
 
 def get_bayes_optimal_probabilities(noisy_X, noise_sd, clean_X, clean_y):
     """
     Generalized Bayesian optimal predictor.
     Calculates P(y=1 | noisy_X) by marginalizing over all possible clean prototypes.
     """
-    # 1. Handling the zero-noise edge case
     if noise_sd <= 1e-7:
         idx = torch.cdist(noisy_X, clean_X).argmin(dim=1)
         return clean_y[idx]
 
-    # 2. Compute squared Euclidean distances between EVERY noisy sample
     sq_dists = torch.cdist(noisy_X, clean_X) ** 2
-
-    # 3. Calculate Likelihoods P(X_noisy | X_clean)
     likelihoods = torch.exp(-sq_dists / (2 * noise_sd ** 2))
-
-    # 4. Bayesian Inference (Marginalization)
     prob_y1 = (likelihoods @ clean_y) / likelihoods.sum(dim=1, keepdim=True)
 
     return prob_y1
