@@ -151,7 +151,6 @@ class Simulation:
         if rule_sig == self.active_rules.get(domain_sig, rule_sig):
             return
 
-        print(f"\n[!!!] GLOBAL SHIFT TRIGGERED AT BLOCK '{current_cfg['block_name']}' [!!!]")
         domains_to_update = [k for k in test_envs.keys() if k != "Combined"]
 
         for d_sig in domains_to_update:
