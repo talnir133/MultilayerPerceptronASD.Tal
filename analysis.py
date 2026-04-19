@@ -73,37 +73,74 @@ class SimulationAnalyzer:
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
 
     def _plot_metric_on_ax(self, ax, metric_name, ylabel, log_scale=False):
-        low, high, opt, bounds, blocks = [], [], [], [0], []
+        import matplotlib.colors as mcolors
 
-        for name, res in self.results:
-            low.extend(res["data_low"].get(metric_name, []))
-            high.extend(res["data_high"].get(metric_name, []))
-            if f"{metric_name}_optimal" in res["data_low"]:
-                opt.extend(res["data_low"][f"{metric_name}_optimal"])
+        sample_metric = self.results[0][1]["data_low"].get(metric_name)
+        is_env_based = isinstance(sample_metric, dict)
+        bounds, blocks = [0], []
 
-            bounds.append(len(low))
-            blocks.append(name)
+        if not is_env_based:
+            low, high = [], []
+            for name, res in self.results:
+                low.extend(res["data_low"].get(metric_name, []))
+                high.extend(res["data_high"].get(metric_name, []))
+                bounds.append(len(low))
+                blocks.append(name)
+            ax.plot(low, label='Low Variance', color='blue')
+            ax.plot(high, label='High Variance', color='red')
+        else:
+            envs = [env for env in sample_metric.keys() if env != "Combined"]
+            if not envs: envs = ["Combined"]
+            env_data_low = {env: [] for env in envs}
+            env_data_high = {env: [] for env in envs}
+            env_data_opt = {env: [] for env in envs}
 
-        ax.plot(low, label='Low Variance (RichMLP)', color='blue')
-        ax.plot(high, label='High Variance (LazyMLP)', color='red')
-        if self.config.get("sd", 0) > 0.0 and opt:
-            ax.plot(opt, label='Bayes Optimal', color='green', alpha=0.5)
+            color_pairs = [
+                ('#0047AB', '#00BFFF'),
+                ('#8B0000', '#FF4500'),
+                ('#006400', '#32CD32'),
+                ('#4B0082', '#DA70D6'),
+                ('#8B4513', '#D2691E'),
+                ('#2F4F4F', '#20B2AA')
+            ]
+
+            for name, res in self.results:
+                for env in envs:
+                    env_data_low[env].extend(res["data_low"][metric_name][env])
+                    env_data_high[env].extend(res["data_high"][metric_name][env])
+                    opt_key = f"{metric_name}_optimal"
+                    if opt_key in res["data_low"] and env in res["data_low"].get(opt_key, {}):
+                        env_data_opt[env].extend(res["data_low"][opt_key][env])
+                bounds.append(len(env_data_low[envs[0]]))
+                blocks.append(name)
+
+            for idx, env in enumerate(envs):
+                c_low, c_high = color_pairs[idx % len(color_pairs)]
+
+                ax.plot(env_data_low[env], label=f'Low Var ({env})', color=c_low, linewidth=2, linestyle='-')
+                ax.plot(env_data_high[env], label=f'High Var ({env})', color=c_high, linewidth=2, linestyle='-')
+
+                if self.config.get("sd", 0) > 0.0 and env_data_opt[env]:
+                    rgb_low = np.array(mcolors.to_rgb(c_low))
+                    rgb_high = np.array(mcolors.to_rgb(c_high))
+                    c_avg = tuple((rgb_low + rgb_high) / 2.0)
+
+                    ax.plot(env_data_opt[env], label=f'Bayes Opt ({env})', color=c_avg, alpha=0.6, linestyle='--',
+                            linewidth=1.5)
 
         x_offset = bounds[-1] * 0.02
         for i in range(1, len(bounds) - 1):
             ax.axvline(x=bounds[i], color='gray', linestyle='--', linewidth=1)
-            ax.text(bounds[i] - x_offset, sum(ax.get_ylim()) / 2, 'Block Shift',
-                    color='gray', fontsize=9, rotation=90, va='center', ha='right')
+            ax.text(bounds[i] - x_offset, sum(ax.get_ylim()) / 2, 'Block Shift', color='gray', fontsize=9, rotation=90,
+                    va='center', ha='right')
 
         for i in range(len(blocks)):
-            ax.text((bounds[i] + bounds[i + 1]) / 2, -0.06, blocks[i],
-                    transform=ax.get_xaxis_transform(), ha='center', va='top',
-                    fontsize=10, fontweight='bold', color='darkblue')
+            ax.text((bounds[i] + bounds[i + 1]) / 2, -0.06, blocks[i], transform=ax.get_xaxis_transform(), ha='center',
+                    va='top', fontsize=10, fontweight='bold', color='darkblue')
 
         ax.set(xlabel='Epochs', ylabel=ylabel)
         ax.xaxis.labelpad = 20
-        if log_scale:
-            ax.set_yscale('log')
+        if log_scale: ax.set_yscale('log')
         ax.grid(True, which="both", ls="-", alpha=0.5)
 
     def _graph_template(self, metric_key, y_axis_name, log_scale=False, show_config=True):
@@ -155,8 +192,11 @@ class SimulationAnalyzer:
         self._save_fig(f"{layer_name}_std_figure_{self.exp_name.replace(' ', '_')}")
         plt.show()
 
-    def plot_mds(self, epochs=(-1,), layer_name='fc1', show_config=True, mode='static'):
+    def plot_mds(self, epochs=(-1,), layer_name='fc1', target_env="Combined", show_config=True, mode='static'):
         if isinstance(epochs, int): epochs = (epochs,)
+        if target_env not in self.results[0][1]["data_low"]["activations_clean"]:
+            target_env = list(self.results[0][1]["data_low"]["activations_clean"].keys())[0]
+
         if mode == 'static':
             n_cols, n_rows, n_blks = len(epochs), 2, len(self.results)
             model_types, row_titles = ['low', 'high'], ['Low Variance\n(RichMLP)', 'High Variance\n(LazyMLP)']
@@ -164,15 +204,16 @@ class SimulationAnalyzer:
             if n_cols == 1: axs = axs.reshape(n_rows, 1)
             plt.subplots_adjust(right=0.65, wspace=0.3, hspace=0.3)
             scatter_ref = None
+
             for row_idx, (m_type, r_title) in enumerate(zip(model_types, row_titles)):
                 for col_idx, epoch in enumerate(epochs):
                     ax = axs[row_idx, col_idx]
-                    t_block, t_res, t_cfg, rel_ep, cur_ep = None, None, None, 0, 0
+                    t_block, t_res, rel_ep, cur_ep = None, None, 0, 0
                     for b_name, b_res in self.results:
-                        n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"])
+                        n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"][target_env])
                         if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
-                            t_block, t_res, t_cfg, rel_ep = b_name, b_res[f"data_{m_type}"], b_res["config"], (
-                                        n_eps - 1) if epoch == -1 else (epoch - cur_ep)
+                            t_block, t_res, rel_ep = b_name, b_res[f"data_{m_type}"], (n_eps - 1) if epoch == -1 else (
+                                        epoch - cur_ep)
                             break
                         cur_ep += n_eps
                     if t_res is None:
@@ -180,17 +221,22 @@ class SimulationAnalyzer:
                                 fontsize=12);
                         ax.axis('off');
                         continue
-                    dist_mat = squareform(t_res["activation_distances_clean"][rel_ep][layer_name])
+
+                    dist_mat = squareform(t_res["activation_distances_clean"][target_env][rel_ep][layer_name])
                     coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
                         dist_mat)
-                    scatter = ax.scatter(coords[:, 0], coords[:, 1], c=t_res["y"][:, 0].cpu().numpy().flatten(),
-                                         cmap='coolwarm', s=100, edgecolors='gray', alpha=0.85)
+                    env_y = t_res["envs_data"][target_env]["y"].flatten()
+                    env_X = t_res["envs_data"][target_env]["X"]
+
+                    scatter = ax.scatter(coords[:, 0], coords[:, 1], c=env_y, cmap='coolwarm', s=100, edgecolors='gray',
+                                         alpha=0.85)
                     scatter_ref = scatter if scatter_ref is None else scatter_ref
-                    ft, zf, X = self.config["features_types"], t_cfg.get("zero_features", []), t_res["X"].cpu().numpy()
+                    ft = self.config["features_types"]
                     for i, coord in enumerate(coords):
                         f_str, s_idx = [], 0
-                        for f_idx, dim in enumerate(ft):
-                            f_str.append("-" if f_idx in zf else str(np.argmax(X[i][s_idx:s_idx + dim])))
+                        for dim in ft:
+                            feat_slice = env_X[i][s_idx:s_idx + dim]
+                            f_str.append("-" if np.sum(feat_slice) == 0 else str(np.argmax(feat_slice)))
                             s_idx += dim
                         ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
                                     fontsize=8, fontweight='bold', color='#444444')
@@ -214,14 +260,14 @@ class SimulationAnalyzer:
                     g_bot.legend(*scatter_ref.legend_elements(), title="True Categories", loc='upper left',
                                  bbox_to_anchor=(1.05, 1.0), fontsize=11, title_fontsize=12)
 
-            fig.suptitle(f"MDS Evolution of '{layer_name}' Activations in {self.exp_name.capitalize()}",
-                         fontweight='bold', fontsize=18, y=1.02)
-            self._save_fig(f"MDS_grid_{layer_name}_eps_{'_'.join(map(str, epochs))}");
+            fig.suptitle(
+                f"MDS Evolution of '{layer_name}' Activations in {self.exp_name.capitalize()}\nEvaluated on Environment: {target_env}",
+                fontweight='bold', fontsize=18, y=1.02)
+            self._save_fig(f"MDS_grid_{layer_name}_{target_env}_eps_{'_'.join(map(str, epochs))}");
             plt.show()
 
         elif mode == 'animation':
             from matplotlib import animation
-            from IPython.display import HTML, display
             fig, axs = plt.subplots(1, 2, figsize=(14, 7))
             model_types, titles = ['low', 'high'], ['Low Variance (RichMLP)', 'High Variance (LazyMLP)']
             plt.subplots_adjust(wspace=0.2)
@@ -231,12 +277,12 @@ class SimulationAnalyzer:
                 for idx, ax in enumerate(axs):
                     ax.clear()
                     m_type = model_types[idx]
-                    t_block, t_res, t_cfg, rel_ep, cur_ep = None, None, None, 0, 0
+                    t_block, t_res, rel_ep, cur_ep = None, None, 0, 0
                     for b_name, b_res in self.results:
-                        n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"])
+                        n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"][target_env])
                         if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
-                            t_block, t_res, t_cfg, rel_ep = b_name, b_res[f"data_{m_type}"], b_res["config"], (
-                                        n_eps - 1) if epoch == -1 else (epoch - cur_ep)
+                            t_block, t_res, rel_ep = b_name, b_res[f"data_{m_type}"], (n_eps - 1) if epoch == -1 else (
+                                        epoch - cur_ep)
                             break
                         cur_ep += n_eps
                     if t_res is None:
@@ -244,16 +290,21 @@ class SimulationAnalyzer:
                                 fontsize=12);
                         ax.axis('off');
                         continue
-                    dist_mat = squareform(t_res["activation_distances_clean"][rel_ep][layer_name])
+
+                    dist_mat = squareform(t_res["activation_distances_clean"][target_env][rel_ep][layer_name])
                     coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
                         dist_mat)
-                    y, X = t_res["y"][:, 0].cpu().numpy().flatten(), t_res["X"].cpu().numpy()
-                    ax.scatter(coords[:, 0], coords[:, 1], c=y, cmap='coolwarm', s=130, edgecolors='gray', alpha=0.85)
-                    ft, zf = self.config["features_types"], t_cfg.get("zero_features", [])
+                    env_y = t_res["envs_data"][target_env]["y"].flatten()
+                    env_X = t_res["envs_data"][target_env]["X"]
+
+                    ax.scatter(coords[:, 0], coords[:, 1], c=env_y, cmap='coolwarm', s=130, edgecolors='gray',
+                               alpha=0.85)
+                    ft = self.config["features_types"]
                     for i, coord in enumerate(coords):
                         f_str, s_idx = [], 0
-                        for f_idx, dim in enumerate(ft):
-                            f_str.append("-" if f_idx in zf else str(np.argmax(X[i][s_idx:s_idx + dim])))
+                        for dim in ft:
+                            feat_slice = env_X[i][s_idx:s_idx + dim]
+                            f_str.append("-" if np.sum(feat_slice) == 0 else str(np.argmax(feat_slice)))
                             s_idx += dim
                         ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
                                     fontsize=9, fontweight='bold', color='#444444')
@@ -262,8 +313,8 @@ class SimulationAnalyzer:
                     ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch == -1 else epoch} | Block: {t_block}",
                                  fontweight='bold', fontsize=13)
 
-            fig.suptitle(f"MDS Dynamic Evolution: '{layer_name}' ({self.exp_name.capitalize()})", fontweight='bold',
-                         fontsize=16)
-            anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=800, repeat=True)
-            plt.close(fig)
-            display(HTML(anim.to_jshtml()))
+            fig.suptitle(
+                f"MDS Dynamic Evolution: '{layer_name}' ({self.exp_name.capitalize()})\nEvaluated on Environment: {target_env}",
+                fontweight='bold', fontsize=16)
+            self.anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=800, repeat=True)
+            plt.show()
