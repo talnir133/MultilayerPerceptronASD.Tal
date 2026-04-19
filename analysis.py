@@ -107,7 +107,7 @@ class SimulationAnalyzer:
         ax.grid(True, which="both", ls="-", alpha=0.5)
 
     def _graph_template(self, metric_key, y_axis_name, log_scale=False, show_config=True):
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(15, 6))
         plt.subplots_adjust(right=0.65, bottom=0.15)
 
         self._plot_metric_on_ax(ax, metric_key, y_axis_name, log_scale)
@@ -128,13 +128,13 @@ class SimulationAnalyzer:
 
         self._graph_template(metric_key, y_axis_name, log_scale, show_config)
 
-    def plot_loss(self, sub_type="clean", log_scale=False, show_config=True):
+    def plot_loss(self, sub_type="noisy", log_scale=False, show_config=True):
         self._plot_standard_metric("losses", "BCE Loss", sub_type, log_scale, show_config)
 
-    def plot_accuracy(self, sub_type="clean", show_config=True):
+    def plot_accuracy(self, sub_type="noisy", show_config=True):
         self._plot_standard_metric("accuracies", "Accuracy", sub_type, False, show_config)
 
-    def plot_mae(self, sub_type="clean", show_config=True):
+    def plot_mae(self, sub_type="noisy", show_config=True):
         self._plot_standard_metric("MAE", "Mean Absolute Error", sub_type, False, show_config)
 
     def plot_parameters_std(self, layer_name="fc1", show_config=True):
@@ -155,46 +155,115 @@ class SimulationAnalyzer:
         self._save_fig(f"{layer_name}_std_figure_{self.exp_name.replace(' ', '_')}")
         plt.show()
 
-    def plot_mds(self, epochs=(-1,), layer_name='fc1', show_config=True):
+    def plot_mds(self, epochs=(-1,), layer_name='fc1', show_config=True, mode='static'):
         if isinstance(epochs, int): epochs = (epochs,)
-        n_cols, n_rows, n_blks = len(epochs), 2, len(self.results)
-        model_types, row_titles = ['low', 'high'], ['Low Variance\n(RichMLP)', 'High Variance\n(LazyMLP)']
-        fig, axs = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 10))
-        if n_cols == 1: axs = axs.reshape(n_rows, 1)
-        plt.subplots_adjust(right=0.7, wspace=0.3, hspace=0.3)
-        scatter_ref = None
-        for row_idx, (m_type, r_title) in enumerate(zip(model_types, row_titles)):
-            for col_idx, epoch in enumerate(epochs):
-                ax = axs[row_idx, col_idx]
-                t_block, t_res, t_cfg, rel_ep, cur_ep = None, None, None, 0, 0
-                for b_name, b_res in self.results:
-                    n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"])
-                    if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
-                        t_block, t_res, t_cfg = b_name, b_res[f"data_{m_type}"], b_res["config"]
-                        rel_ep = (n_eps - 1) if epoch == -1 else (epoch - cur_ep)
-                        break
-                    cur_ep += n_eps
-                if t_res is None:
-                    ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red', fontsize=12); ax.axis('off'); continue
-                dist_mat = squareform(t_res["activation_distances_clean"][rel_ep][layer_name])
-                coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(dist_mat)
-                scatter = ax.scatter(coords[:, 0], coords[:, 1], c=t_res["y"][:, 0].cpu().numpy().flatten(), cmap='coolwarm', s=100, edgecolors='gray', alpha=0.85)
-                scatter_ref = scatter if scatter_ref is None else scatter_ref
-                ft, zf = self.config["features_types"], t_cfg.get("zero_features", [])
-                X = t_res["X"].cpu().numpy()
-                for i, coord in enumerate(coords):
-                    f_str, s_idx = [], 0
-                    for f_idx, dim in enumerate(ft):
-                        f_str.append("-" if f_idx in zf else str(np.argmax(X[i][s_idx:s_idx + dim])))
-                        s_idx += dim
-                    ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points', fontsize=8, fontweight='bold', color='#444444')
-                ax.margins(0.15); ax.grid(True, linestyle='--', alpha=0.5)
-                if row_idx == 0:
-                    title_str = f"Epoch: {'Last' if epoch == -1 else epoch}"
-                    if n_blks > 1: title_str += f"\nBlock: {t_block}"
-                    ax.set_title(title_str, fontweight='bold', fontsize=12)
-                if col_idx == 0: ax.set_ylabel(r_title, fontweight='bold', fontsize=13, labelpad=15)
-        if show_config: self._add_config_info(axs[0, -1], show_config)
-        if scatter_ref: axs[1, -1].legend(*scatter_ref.legend_elements(), title="True Categories", loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=11, title_fontsize=12)
-        fig.suptitle(f"MDS Evolution of '{layer_name}' Activations in {self.exp_name.capitalize()}", fontweight='bold', fontsize=18, y=1.02)
-        self._save_fig(f"MDS_grid_{layer_name}_eps_{'_'.join(map(str, epochs))}"); plt.show()
+        if mode == 'static':
+            n_cols, n_rows, n_blks = len(epochs), 2, len(self.results)
+            model_types, row_titles = ['low', 'high'], ['Low Variance\n(RichMLP)', 'High Variance\n(LazyMLP)']
+            fig, axs = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 10))
+            if n_cols == 1: axs = axs.reshape(n_rows, 1)
+            plt.subplots_adjust(right=0.65, wspace=0.3, hspace=0.3)
+            scatter_ref = None
+            for row_idx, (m_type, r_title) in enumerate(zip(model_types, row_titles)):
+                for col_idx, epoch in enumerate(epochs):
+                    ax = axs[row_idx, col_idx]
+                    t_block, t_res, t_cfg, rel_ep, cur_ep = None, None, None, 0, 0
+                    for b_name, b_res in self.results:
+                        n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"])
+                        if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
+                            t_block, t_res, t_cfg, rel_ep = b_name, b_res[f"data_{m_type}"], b_res["config"], (
+                                        n_eps - 1) if epoch == -1 else (epoch - cur_ep)
+                            break
+                        cur_ep += n_eps
+                    if t_res is None:
+                        ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red',
+                                fontsize=12);
+                        ax.axis('off');
+                        continue
+                    dist_mat = squareform(t_res["activation_distances_clean"][rel_ep][layer_name])
+                    coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
+                        dist_mat)
+                    scatter = ax.scatter(coords[:, 0], coords[:, 1], c=t_res["y"][:, 0].cpu().numpy().flatten(),
+                                         cmap='coolwarm', s=100, edgecolors='gray', alpha=0.85)
+                    scatter_ref = scatter if scatter_ref is None else scatter_ref
+                    ft, zf, X = self.config["features_types"], t_cfg.get("zero_features", []), t_res["X"].cpu().numpy()
+                    for i, coord in enumerate(coords):
+                        f_str, s_idx = [], 0
+                        for f_idx, dim in enumerate(ft):
+                            f_str.append("-" if f_idx in zf else str(np.argmax(X[i][s_idx:s_idx + dim])))
+                            s_idx += dim
+                        ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
+                                    fontsize=8, fontweight='bold', color='#444444')
+                    ax.margins(0.15);
+                    ax.grid(True, linestyle='--', alpha=0.5)
+                    if row_idx == 0: ax.set_title(
+                        f"Epoch: {'Last' if epoch == -1 else epoch}" + (f"\nBlock: {t_block}" if n_blks > 1 else ""),
+                        fontweight='bold', fontsize=12)
+                    if col_idx == 0: ax.set_ylabel(r_title, fontweight='bold', fontsize=13, labelpad=15)
+
+            if show_config:
+                shift = 0.15 / n_cols
+                p_top = axs[0, -1].get_position()
+                g_top = fig.add_axes([p_top.x0 + shift, p_top.y0, p_top.width, p_top.height])
+                g_top.axis('off')
+                self._add_config_info(g_top, show_config)
+                if scatter_ref:
+                    p_bot = axs[1, -1].get_position()
+                    g_bot = fig.add_axes([p_bot.x0 + shift, p_bot.y0, p_bot.width, p_bot.height])
+                    g_bot.axis('off')
+                    g_bot.legend(*scatter_ref.legend_elements(), title="True Categories", loc='upper left',
+                                 bbox_to_anchor=(1.05, 1.0), fontsize=11, title_fontsize=12)
+
+            fig.suptitle(f"MDS Evolution of '{layer_name}' Activations in {self.exp_name.capitalize()}",
+                         fontweight='bold', fontsize=18, y=1.02)
+            self._save_fig(f"MDS_grid_{layer_name}_eps_{'_'.join(map(str, epochs))}");
+            plt.show()
+
+        elif mode == 'animation':
+            from matplotlib import animation
+            from IPython.display import HTML, display
+            fig, axs = plt.subplots(1, 2, figsize=(14, 7))
+            model_types, titles = ['low', 'high'], ['Low Variance (RichMLP)', 'High Variance (LazyMLP)']
+            plt.subplots_adjust(wspace=0.2)
+
+            def update(frame_idx):
+                epoch = epochs[frame_idx]
+                for idx, ax in enumerate(axs):
+                    ax.clear()
+                    m_type = model_types[idx]
+                    t_block, t_res, t_cfg, rel_ep, cur_ep = None, None, None, 0, 0
+                    for b_name, b_res in self.results:
+                        n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"])
+                        if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
+                            t_block, t_res, t_cfg, rel_ep = b_name, b_res[f"data_{m_type}"], b_res["config"], (
+                                        n_eps - 1) if epoch == -1 else (epoch - cur_ep)
+                            break
+                        cur_ep += n_eps
+                    if t_res is None:
+                        ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red',
+                                fontsize=12);
+                        ax.axis('off');
+                        continue
+                    dist_mat = squareform(t_res["activation_distances_clean"][rel_ep][layer_name])
+                    coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
+                        dist_mat)
+                    y, X = t_res["y"][:, 0].cpu().numpy().flatten(), t_res["X"].cpu().numpy()
+                    ax.scatter(coords[:, 0], coords[:, 1], c=y, cmap='coolwarm', s=130, edgecolors='gray', alpha=0.85)
+                    ft, zf = self.config["features_types"], t_cfg.get("zero_features", [])
+                    for i, coord in enumerate(coords):
+                        f_str, s_idx = [], 0
+                        for f_idx, dim in enumerate(ft):
+                            f_str.append("-" if f_idx in zf else str(np.argmax(X[i][s_idx:s_idx + dim])))
+                            s_idx += dim
+                        ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
+                                    fontsize=9, fontweight='bold', color='#444444')
+                    ax.margins(0.15);
+                    ax.grid(True, linestyle='--', alpha=0.5)
+                    ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch == -1 else epoch} | Block: {t_block}",
+                                 fontweight='bold', fontsize=13)
+
+            fig.suptitle(f"MDS Dynamic Evolution: '{layer_name}' ({self.exp_name.capitalize()})", fontweight='bold',
+                         fontsize=16)
+            anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=800, repeat=True)
+            plt.close(fig)
+            display(HTML(anim.to_jshtml()))

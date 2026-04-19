@@ -89,15 +89,6 @@ class Simulation:
             metric_callback=get_metric_callback(data_high, cfg, X, y) if self.track_metrics else lambda m, x, c: None
         )
 
-        # --- Final loss computation---
-        criterion = nn.BCEWithLogitsLoss()
-        for condition, mdl, data_dict in [("low", model_low, data_low), ("high", model_high, data_high)]:
-            mdl.eval()
-            with torch.no_grad():
-                y_pred = mdl(X)
-                final_class_loss = criterion(y_pred[:, 0:1], y[:, 0:1]).item()
-                print(f'{condition.capitalize()} Final Classification Loss: {final_class_loss:.4f}')
-
         return {
             "X": X, "y": y, "config": cfg,
             "model_low": model_low, "optimizer_low": optimizer_low, "data_low": data_low,
