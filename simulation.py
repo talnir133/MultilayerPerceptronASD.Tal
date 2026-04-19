@@ -58,7 +58,7 @@ class Simulation:
                 cfg["b_scale_low"], cfg["activation_type"]
             ).to(self.device)
             models["low"].reinitialize()
-            optimizers["low"] = cfg["optimizer_type"](models["low"].parameters(), lr=0.004)
+            optimizers["low"] = cfg["optimizer_type"](models["low"].parameters(), lr=cfg.get("lr", 0.004))
 
         model_low, optimizer_low = train_model(
             models["low"], optimizers["low"], X, y,
@@ -80,7 +80,7 @@ class Simulation:
                 cfg["b_scale_high"], cfg["activation_type"]
             ).to(self.device)
             models["high"].reinitialize()
-            optimizers["high"] = cfg["optimizer_type"](models["high"].parameters(), lr=0.004)
+            optimizers["high"] = cfg["optimizer_type"](models["high"].parameters(), lr=cfg.get("lr", 0.004))
 
         model_high, optimizer_high = train_model(
             models["high"], optimizers["high"], X, y,

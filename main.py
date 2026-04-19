@@ -16,6 +16,7 @@ CONFIG = {
     "optimizer_type": "Adam",
     "activation_type": "Identity",
     "batch_size": 1,
+    "lr" : 0.004,
     "seed": 0,
     "sd": 0,
     "exp_blocks": [{"block_name": "b1", "zero_features": (),"rule": "upper_half","deciding_feature":0, "epochs": 20, "alpha_class": 1, "alpha_rec": 0}]
@@ -35,9 +36,9 @@ def run_simulation(config_source):
 
 if __name__ == '__main__':
     # Simulation Running
-    # s = run_simulation("gui")
+    s = run_simulation("gui")
     # s = run_simulation("test")
-    s = run_simulation(CONFIG)
+    # s = run_simulation(CONFIG)
     # s.plot_mae()
     # s.plot_mae(sub_type="noisy")
     s.plot_mds((0,5))

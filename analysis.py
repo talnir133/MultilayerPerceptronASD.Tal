@@ -45,7 +45,7 @@ class SimulationAnalyzer:
         categories = {
             "Input:": ['features_types', 'seed', 'sd'],
             "Network:": ['hidden_size', 'n_hidden', 'b_scale_low', 'b_scale_high',
-                         'w_scale_low', 'w_scale_high', 'optimizer_type', 'activation_type', 'batch_size']
+                         'w_scale_low', 'w_scale_high', 'optimizer_type', 'activation_type', 'batch_size', 'lr']
         }
 
         for title, keys in categories.items():
@@ -161,7 +161,7 @@ class SimulationAnalyzer:
         model_types, row_titles = ['low', 'high'], ['Low Variance\n(RichMLP)', 'High Variance\n(LazyMLP)']
         fig, axs = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 10))
         if n_cols == 1: axs = axs.reshape(n_rows, 1)
-        plt.subplots_adjust(right=0.8, wspace=0.3, hspace=0.3)
+        plt.subplots_adjust(right=0.7, wspace=0.3, hspace=0.3)
         scatter_ref = None
         for row_idx, (m_type, r_title) in enumerate(zip(model_types, row_titles)):
             for col_idx, epoch in enumerate(epochs):
