@@ -48,12 +48,12 @@ class IDR_check:
     def _reset_data(self):
         self.model_low_preds, self.model_high_preds = [], []
         self.low_params, self.high_params = [], []
+        self.low_errors, self.high_errors = [], []
 
     def get_data(self, seed):
         self.config["seed"] = seed
         results = Simulation(self.config).run(track_metrics=False)
         models = [results[0][1]["model_low"], results[0][1]["model_high"]]
-
         line_points = torch.tensor([0.0, 1.0]) + self.t * torch.tensor([1.0, -1.0])
 
         with torch.no_grad():
@@ -63,12 +63,24 @@ class IDR_check:
         self.model_high_preds.append(preds[1])
 
         t_vals = self.t.flatten().numpy()
-        for param_list, y_pred in zip((self.low_params, self.high_params), preds):
+        for param_list, error_list, y_pred in zip((self.low_params, self.high_params),
+                                                  (self.low_errors, self.high_errors),
+                                                  preds):
             try:
                 popt, _ = curve_fit(norm.cdf, t_vals, y_pred, p0=[0.5, 0.1], bounds=([-2, 1e-5], [3, 5]))
                 param_list.append(tuple(popt))
+
+                # --- R-squared Calculation ---
+                fitted_y = norm.cdf(t_vals, *popt)
+                ss_res = np.sum((y_pred - fitted_y) ** 2)
+                ss_tot = np.sum((y_pred - np.mean(y_pred)) ** 2)
+
+                r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+                error_list.append(max(0, r2))
+
             except RuntimeError:
                 param_list.append((np.nan, np.nan))
+                error_list.append(np.nan)
 
         return results
 
@@ -152,8 +164,9 @@ class IDR_check:
         plt.show()
 
     def plot_sigmoid_SDs(self, samples_per_b_w=20, epochs_per_simulation=None,
-                                   b_range=(0.1, 2), w_range=(0.1, 5), dots_density=10):
-        w_vals, b_vals, sd_vals = [], [], []
+                         b_range=(0.1, 2), w_range=(0.1, 5), dots_density=10):
+        """Maps the Dynamic Range (SD) across a grid of weight and bias initialization scales."""
+        w_vals, b_vals, sd_vals, r2_vals = [], [], [], []
         seed_counter = self.seed
         run_epochs = epochs_per_simulation if epochs_per_simulation is not None else self.epochs
         self.config["exp_blocks"][0]["epochs"] = run_epochs
@@ -168,38 +181,62 @@ class IDR_check:
                     p1 = grid[i]
                     p2 = grid[i + 1] if i + 1 < len(grid) else p1
 
-                    self.config.update({"w_scale_low": p1[0], "b_scale_low": p1[1], "w_scale_high": p2[0], "b_scale_high": p2[1]})
+                    self.config.update({"w_scale_low": p1[0], "b_scale_low": p1[1],
+                                        "w_scale_high": p2[0], "b_scale_high": p2[1]})
 
-                    l_sds, h_sds = [], []
+                    l_sds, h_sds, l_r2s, h_r2s = [], [], [], []
                     for _ in range(samples_per_b_w):
                         self._reset_data()
                         self.get_data(seed=seed_counter)
                         seed_counter += 1
 
-                        if not np.isnan(l_sd := self.low_params[-1][1]): l_sds.append(l_sd)
-                        if not np.isnan(h_sd := self.high_params[-1][1]): h_sds.append(h_sd)
+                        if not np.isnan(l_sd := self.low_params[-1][1]):
+                            l_sds.append(l_sd)
+                            l_r2s.append(self.low_errors[-1])
+
+                        if not np.isnan(h_sd := self.high_params[-1][1]):
+                            h_sds.append(h_sd)
+                            h_r2s.append(self.high_errors[-1])
 
                     if l_sds:
-                        w_vals.append(p1[0]); b_vals.append(p1[1]); sd_vals.append(np.mean(l_sds))
+                        w_vals.append(p1[0]);
+                        b_vals.append(p1[1]);
+                        sd_vals.append(np.mean(l_sds))
+                        r2_vals.append(np.mean(l_r2s))
                     pbar.update(1)
 
                     if h_sds and i + 1 < len(grid):
-                        w_vals.append(p2[0]); b_vals.append(p2[1]); sd_vals.append(np.mean(h_sds))
+                        w_vals.append(p2[0]);
+                        b_vals.append(p2[1]);
+                        sd_vals.append(np.mean(h_sds))
+                        r2_vals.append(np.mean(h_r2s))
                         pbar.update(1)
 
         self.config["exp_blocks"][0]["epochs"] = self.epochs
 
-        fig = go.Figure(data=[go.Scatter3d(x=w_vals, y=b_vals, z=sd_vals, mode='markers',
-            marker=dict(size=6, color=sd_vals, colorscale='Viridis', opacity=0.8,
-                        line=dict(width=1, color='black'), colorbar=dict(title="Mean SD (σ)")))])
+        # Calculate statistics for the display title (converted to percentages)
+        avg_r2 = np.nanmean(r2_vals) * 100
+        min_r2 = np.nanmin(r2_vals) * 100
 
-        fig.update_layout(title=f"Sigmoid SD vs. w_scale and b_scale<br>Activation: {self.act_type} | Epochs: {run_epochs}",
+        # Create interactive Plotly 3D scatter plot
+        fig = go.Figure(data=[go.Scatter3d(
+            x=w_vals, y=b_vals, z=sd_vals, mode='markers',
+            marker=dict(size=6, color=sd_vals, colorscale='Viridis', opacity=0.8,
+                        line=dict(width=1, color='black'), colorbar=dict(title="Mean SD (σ)"))
+        )])
+
+        # Set title with Fit Reliability info
+        fit_info = f"<br><br><sup>Activation Function: {self.act_type} | Epochs: {run_epochs}<br>Fit Reliability (R²): Average {avg_r2:.1f}% | Worst Fit: {min_r2:.1f}%</sup>"
+        fig.update_layout(
+            title=f"Dynamic Range (fitted Gaussian CDF's sd) vs. Weights & Bias Scales{fit_info}",
             scene=dict(xaxis_title="Weight Scale (w)", yaxis_title="Bias Scale (b)", zaxis_title="Mean SD (σ)"),
-            margin=dict(l=0, r=0, b=0, t=50))
+            margin=dict(l=0, r=0, b=0, t=80)
+        )
 
         file_path = os.path.join(self.save_dir, "sigmoid_sd_regression_3D.html")
         c = 1
         while os.path.exists(file_path):
-            file_path = os.path.join(self.save_dir, f"sigmoid_sd_regression_3D_{c}.html"); c += 1
+            file_path = os.path.join(self.save_dir, f"sigmoid_sd_regression_3D_{c}.html");
+            c += 1
         fig.write_html(file_path)
         fig.show()

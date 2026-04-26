@@ -19,7 +19,7 @@ CONFIG = {
     "lr" : 0.001,
     "seed": 0,
     "sd": 0.2,
-     "exp_blocks": [
+    "exp_blocks": [
         {"block_name": "M1", "rule": "upper_half", "zero_features": (), "epochs": 100, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0}]}
 
 
@@ -49,12 +49,11 @@ if __name__ == '__main__':
     drs = IDR_check(sd=0.5,
                     activation_type="Tanh",
                     w_scale_low=0.1,
-                    w_scale_high=50,
-                    b_scale_low=0,
-                    b_scale_high=0,
+                    w_scale_high=0.1,
+                    b_scale_low=0.1,
+                    b_scale_high=2,
                     epochs=50)
 
-    drs.plot_sigmoids(seed=0)
-    drs.plot_histograms(20)
-    drs.plot_sigmoid_SDs(samples_per_b_w = 20, b_range=(0.1, 2), w_range=(0.1, 20), dots_density = 10)
-
+    # drs.plot_sigmoids(seed=0)
+    # drs.plot_histograms(20)
+    drs.plot_sigmoid_SDs(samples_per_b_w = 50, b_range=(0.1, 2), w_range=(0.1, 20), dots_density = 10)

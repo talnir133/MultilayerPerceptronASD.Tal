@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 import os
 from core_ml import Dataset, MLP, train_model
 from classification_rules import RULES_REGISTRY
+import shutil
 
 
 class Simulation:
@@ -35,9 +36,13 @@ class Simulation:
         # Creates a folder named runs/Experiment_Name containing two subfolders for the models
         if tensorboard_writer:
             exp_name = self.global_config.get("exp_name", "experiment").replace(" ", "_")
+            base_log_dir = os.path.join("colab", "runs", exp_name)
+            if os.path.exists(base_log_dir):
+                shutil.rmtree(base_log_dir)
+            os.makedirs(os.path.dirname(base_log_dir), exist_ok=True)
             tb_writers = {
-                "low": SummaryWriter(os.path.join("runs", exp_name, "Low_Variance")),
-                "high": SummaryWriter(os.path.join("runs", exp_name, "High_Variance"))
+                "low": SummaryWriter(os.path.join(base_log_dir, "Low_Variance")),
+                "high": SummaryWriter(os.path.join(base_log_dir, "High_Variance"))
             }
         # --------------------------------------
 
@@ -267,7 +272,8 @@ def get_metric_callback(tracker, cfg, test_envs, tb_writer=None):
 
             # Log the histograms:
             for name, param in current_model._layers.named_parameters():
-                tb_writer.add_histogram(f"Distributions/{name}", param.detach(), current_step)
+                if "fc_last" not in name:
+                    tb_writer.add_histogram(f"Distributions/{name}", param.detach(), current_step)
 
         for env_name, env_data in test_envs.items():
             X_env = env_data["X"]
