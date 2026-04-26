@@ -24,19 +24,21 @@ class Simulation:
         torch.manual_seed(self.global_config["seed"])
         np.random.seed(self.global_config["seed"])
 
-    def run(self, track_metrics=True):
+    def run(self, track_metrics=True, tensorboard_writer=False):
         self.track_metrics = track_metrics
         simulation_results = []
         optimizers, models = {"low": None, "high": None}, {"low": None, "high": None}
         test_envs = {}
+        tb_writers = None
 
         # --- Initialize TensorBoard Writers ---
         # Creates a folder named runs/Experiment_Name containing two subfolders for the models
-        exp_name = self.global_config.get("exp_name", "experiment").replace(" ", "_")
-        tb_writers = {
-            "low": SummaryWriter(os.path.join("runs", exp_name, "Low_Variance")),
-            "high": SummaryWriter(os.path.join("runs", exp_name, "High_Variance"))
-        }
+        if tensorboard_writer:
+            exp_name = self.global_config.get("exp_name", "experiment").replace(" ", "_")
+            tb_writers = {
+                "low": SummaryWriter(os.path.join("runs", exp_name, "Low_Variance")),
+                "high": SummaryWriter(os.path.join("runs", exp_name, "High_Variance"))
+            }
         # --------------------------------------
 
         for i, block in enumerate(self.global_config["exp_blocks"]):
@@ -48,8 +50,9 @@ class Simulation:
             optimizers["low"], optimizers["high"] = block_results["optimizer_low"], block_results["optimizer_high"]
             simulation_results.append([block_config["block_name"], block_results])
 
-        tb_writers["low"].close()
-        tb_writers["high"].close()
+        if tb_writers:
+            tb_writers["low"].close()
+            tb_writers["high"].close()
 
         return simulation_results
 
@@ -60,6 +63,7 @@ class Simulation:
         X, y = self.dataset.get_block_data(cfg.get("zero_features", []), rule_to_apply)
         X, y = X.to(self.device), y.to(self.device)
         noise_mask = get_noise_mask(cfg, X).to(self.device)
+        tb_writers = {"low":None, "high":None} if not tb_writers else tb_writers
 
         data_low = create_tracker(test_envs, X, y)
         data_high = create_tracker(test_envs, X, y)
