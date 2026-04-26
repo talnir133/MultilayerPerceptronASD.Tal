@@ -247,19 +247,23 @@ def get_metric_callback(tracker, cfg, test_envs, tb_writer=None):
     global_sd = cfg.get("sd", 0)
 
     def callback(current_model, X_noisy, loss_criterion):
-        # Our continuous counter: the length of the current history acts as a global Epoch
-        current_step = len(tracker["fc1_weight_sd"])
 
         tracker["noised_data"].append(X_noisy.cpu().detach().numpy())
         tracker["fc1_weight_sd"].append(current_model._layers.fc1.weight.std().item())
         tracker["fc1_bias_sd"].append(
             current_model._layers.fc1.bias.std().item() if current_model._layers.fc1.bias is not None else 0.0)
 
-        # --- Write to TensorBoard ---
+        # TensorBoard logging block (grouped together)
         if tb_writer is not None:
+            # Lazy initialization for the global step
+            if not hasattr(tb_writer, "global_step"):
+                tb_writer.global_step = 0
+            current_step = tb_writer.global_step
+            tb_writer.global_step += 1
+
+            # Log the histograms:
             for name, param in current_model._layers.named_parameters():
                 tb_writer.add_histogram(f"Distributions/{name}", param.detach(), current_step)
-        # ----------------------------
 
         for env_name, env_data in test_envs.items():
             X_env = env_data["X"]
