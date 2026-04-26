@@ -5,6 +5,8 @@ import torch.optim as optim
 import numpy as np
 from sklearn.metrics.pairwise import pairwise_distances
 from functools import partial
+from torch.utils.tensorboard import SummaryWriter
+import os
 from core_ml import Dataset, MLP, train_model
 from classification_rules import RULES_REGISTRY
 
@@ -28,18 +30,30 @@ class Simulation:
         optimizers, models = {"low": None, "high": None}, {"low": None, "high": None}
         test_envs = {}
 
+        # --- Initialize TensorBoard Writers ---
+        # Creates a folder named runs/Experiment_Name containing two subfolders for the models
+        exp_name = self.global_config.get("exp_name", "experiment").replace(" ", "_")
+        tb_writers = {
+            "low": SummaryWriter(os.path.join("runs", exp_name, "Low_Variance")),
+            "high": SummaryWriter(os.path.join("runs", exp_name, "High_Variance"))
+        }
+        # --------------------------------------
+
         for i, block in enumerate(self.global_config["exp_blocks"]):
             block_config = self.get_block_configs(block)
             self._sync_environments(i, block_config, test_envs)
-            block_results = self.run_block(models, optimizers, block_config, test_envs)
-            
+
+            block_results = self.run_block(models, optimizers, block_config, test_envs, tb_writers)
             models["low"], models["high"] = block_results["model_low"], block_results["model_high"]
             optimizers["low"], optimizers["high"] = block_results["optimizer_low"], block_results["optimizer_high"]
             simulation_results.append([block_config["block_name"], block_results])
 
+        tb_writers["low"].close()
+        tb_writers["high"].close()
+
         return simulation_results
 
-    def run_block(self, models, optimizers, cfg, test_envs):
+    def run_block(self, models, optimizers, cfg, test_envs, tb_writers=None):
         print(f"\n--- Running Block: {cfg['block_name']} ---")
         rule_name = cfg.get("rule", "upper_half")
         rule_to_apply = partial(RULES_REGISTRY[rule_name], **cfg)
@@ -70,8 +84,8 @@ class Simulation:
             models["low"], optimizers["low"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_low, cfg, test_envs) if self.track_metrics else lambda m, x,
-                                                                                                            c: None
+            metric_callback=get_metric_callback(data_low, cfg, test_envs,
+                                                tb_writers["low"]) if self.track_metrics else lambda m, x, c: None
         )
 
         # ==========================================
@@ -94,8 +108,8 @@ class Simulation:
             models["high"], optimizers["high"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_high, cfg, test_envs) if self.track_metrics else lambda m, x,
-                                                                                                             c: None
+            metric_callback=get_metric_callback(data_high, cfg, test_envs,
+                                                tb_writers["high"]) if self.track_metrics else lambda m, x, c: None
         )
 
         return {
@@ -229,14 +243,23 @@ def create_tracker(test_envs, X_train, y_train):
     return tracker
 
 
-def get_metric_callback(tracker, cfg, test_envs):
+def get_metric_callback(tracker, cfg, test_envs, tb_writer=None):
     global_sd = cfg.get("sd", 0)
 
     def callback(current_model, X_noisy, loss_criterion):
+        # Our continuous counter: the length of the current history acts as a global Epoch
+        current_step = len(tracker["fc1_weight_sd"])
+
         tracker["noised_data"].append(X_noisy.cpu().detach().numpy())
         tracker["fc1_weight_sd"].append(current_model._layers.fc1.weight.std().item())
         tracker["fc1_bias_sd"].append(
             current_model._layers.fc1.bias.std().item() if current_model._layers.fc1.bias is not None else 0.0)
+
+        # --- Write to TensorBoard ---
+        if tb_writer is not None:
+            for name, param in current_model._layers.named_parameters():
+                tb_writer.add_histogram(f"Distributions/{name}", param.detach(), current_step)
+        # ----------------------------
 
         for env_name, env_data in test_envs.items():
             X_env = env_data["X"]
