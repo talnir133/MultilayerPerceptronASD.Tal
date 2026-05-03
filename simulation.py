@@ -67,8 +67,6 @@ class Simulation:
         rule_to_apply = partial(RULES_REGISTRY[rule_name], **cfg)
         X, y = self.dataset.get_block_data(cfg.get("zero_features", []), rule_to_apply)
         X, y = X.to(self.device), y.to(self.device)
-        print(X)
-        print('\n', y)
         noise_mask = get_noise_mask(cfg, X).to(self.device)
         tb_writers = {"low":None, "high":None} if not tb_writers else tb_writers
 
@@ -134,7 +132,7 @@ class Simulation:
         block_config.update(block)
 
         block_config["input_size"] = sum(block_config["features_types"])
-        block_config["output_size"] = 1 #+ block_config["input_size"] למחוק את הכוכבית!
+        block_config["output_size"] = 1 + block_config["input_size"]
         block_config.setdefault("alpha_class", 1.0)
         block_config.setdefault("alpha_rec", 0.0)
         opt_map = {"Adam": optim.Adam, "SGD": optim.SGD}

@@ -32,8 +32,7 @@ class Dataset:
 
         y_class = rule_func(self.names).view(-1, 1)
         y_rec = X.clone()
-        # y_full = torch.cat((y_class, y_rec), dim=1)
-        y_full = y_class # למחוק (ואת השורה למעלה לתקן)
+        y_full = torch.cat((y_class, y_rec), dim=1)
 
         combined = torch.cat((X, y_full), dim=1)
         _, idx = np.unique(combined.cpu().numpy(), axis=0, return_index=True)
