@@ -36,7 +36,6 @@ class SimulationAnalyzer:
         plt.savefig(file_path, bbox_inches='tight', dpi=300)
 
     def _get_signatures(self, b_cfg):
-        """Helper to identify domains and rules just like the simulation does."""
         zf = b_cfg.get("zero_features", [])
         zf_list = list(zf) if isinstance(zf, (list, tuple)) else ([zf] if zf is not None else [])
         domain_sig = f"(Zero-Features:{','.join(map(str, sorted(zf_list))) or 'None'})"
@@ -88,7 +87,6 @@ class SimulationAnalyzer:
         is_env_based = isinstance(sample_metric, dict)
         bounds, blocks = [0], []
 
-        # -- Shift Detection Logic (Synced with Global Shift) --
         shift_indices = set()
         active_rules = {}
         for i in range(len(self.results)):
@@ -98,10 +96,7 @@ class SimulationAnalyzer:
             if domain_sig not in active_rules:
                 active_rules[domain_sig] = rule_sig
             elif active_rules[domain_sig] != rule_sig:
-                # Global shift triggered! Mark this index.
                 shift_indices.add(i)
-
-                # Fast-forward update for all domains to prevent multiple lines
                 for target_d_sig in active_rules.keys():
                     for j in range(i, len(self.results)):
                         fut_cfg = self.results[j][1]["config"]
@@ -158,16 +153,13 @@ class SimulationAnalyzer:
                     ax.plot(env_data_opt[env], label=f'Bayes Opt ({env})', color=c_avg, alpha=0.6, linestyle='--',
                             linewidth=1.5)
 
-        # Drawing the block separators and delicate shift annotations
         x_offset = bounds[-1] * 0.015
         for i in range(1, len(bounds) - 1):
             if i in shift_indices:
-                # Delicate gray line and text for the SHIFT
                 ax.axvline(x=bounds[i], color='#888888', linestyle='--', linewidth=1.5)
                 ax.text(bounds[i] - x_offset, sum(ax.get_ylim()) / 2, 'Rules Shift',
                         color='#888888', fontsize=10, rotation=90, va='center', ha='right', fontweight='normal')
             else:
-                # Faint line without text for regular blocks
                 ax.axvline(x=bounds[i], color='gray', linestyle='--', linewidth=1, alpha=0.7)
 
         for i in range(len(blocks)):
@@ -210,23 +202,97 @@ class SimulationAnalyzer:
     def plot_mae(self, sub_type="noisy", show_config=True):
         self._plot_standard_metric("MAE", "Mean Absolute Error", sub_type, False, show_config)
 
-    def plot_parameters_std(self, layer_name="fc1", show_config=True):
-        fig, axs = plt.subplots(1, 2, figsize=(14, 6))
-        plt.subplots_adjust(right=0.75, bottom=0.15, wspace=0.25)
+    def plot_parameter_distributions(self, param_type="weights", bins=50, show_config=True):
+        """
+        Creates an animation showing the distribution of weights or biases over all epochs.
+        param_type: "weights" or "biases"
+        """
+        from matplotlib import animation
+        from IPython.display import display, HTML
 
-        self._plot_metric_on_ax(axs[0], f"{layer_name}_weight_sd", "Std Dev")
-        axs[0].set_title("Weights Standard Deviation", fontweight='bold')
+        if param_type not in ["weights", "biases"]:
+            raise ValueError("param_type must be 'weights' or 'biases'")
 
-        self._plot_metric_on_ax(axs[1], f"{layer_name}_bias_sd", "Std Dev")
-        axs[1].set_title("Biases Standard Deviation", fontweight='bold')
+        key = f"fc1_{param_type}"
+        low_data, high_data, epoch_labels = [], [], []
 
-        fig.suptitle(f"{layer_name.upper()} Parameters Standard Deviation in {self.exp_name.capitalize()}",
-                     fontweight='bold', fontsize=14)
-        axs[1].legend(loc='lower left', bbox_to_anchor=(1.05, 0.0), frameon=True, edgecolor='gray')
+        # Extract all epochs sequentially across all blocks
+        for b_name, b_res in self.results:
+            l_params = b_res["data_low"][key]
+            h_params = b_res["data_high"][key]
+            low_data.extend(l_params)
+            high_data.extend(h_params)
+            epoch_labels.extend([f"Block: {b_name} | Epoch: {i}" for i in range(len(l_params))])
 
-        self._add_config_info(axs[1], show_config)
-        self._save_fig(f"{layer_name}_std_figure_{self.exp_name.replace(' ', '_')}")
-        plt.show()
+        if not low_data:
+            print(f"No data found for {param_type}.")
+            return
+
+        # Calculate individual min/max for dynamic X-axes to fix the scale issue
+        all_low = np.concatenate([d.flatten() for d in low_data])
+        all_high = np.concatenate([d.flatten() for d in high_data])
+
+        low_min, low_max = all_low.min(), all_low.max()
+        high_min, high_max = all_high.min(), all_high.max()
+
+        # Add a tiny padding to the bounds to prevent clipping on the edges
+        low_pad = (low_max - low_min) * 0.05
+        high_pad = (high_max - high_min) * 0.05
+
+        low_range = (low_min - low_pad, low_max + low_pad)
+        high_range = (high_min - high_pad, high_max + high_pad)
+
+        # Find the maximum bin density for the Y axis (using density=True)
+        y_max = 0
+        for l, h in zip(low_data, high_data):
+            c_l, _ = np.histogram(l.flatten(), bins=bins, range=low_range, density=True)
+            c_h, _ = np.histogram(h.flatten(), bins=bins, range=high_range, density=True)
+            y_max = max(y_max, c_l.max(), c_h.max())
+        y_max = y_max * 1.1
+
+        # Adjust height to give titles more room
+        fig, axs = plt.subplots(1, 2, figsize=(14, 7))
+
+        # Hardcoded margins to strictly prevent title overlap
+        plt.subplots_adjust(top=0.75, bottom=0.15, wspace=0.3, right=0.75 if show_config else 0.95)
+
+        if show_config:
+            p_top = axs[1].get_position()
+            g_top = fig.add_axes([p_top.x0 + 0.15, p_top.y0, p_top.width, p_top.height])
+            g_top.axis('off')
+            self._add_config_info(g_top, show_config)
+
+        def update(frame_idx):
+            for ax in axs:
+                ax.clear()
+
+            # Low Variance
+            axs[0].hist(low_data[frame_idx].flatten(), bins=bins, range=low_range, density=True, color='blue',
+                        alpha=0.7, edgecolor='black')
+            axs[0].set_title(f"Low Variance (RichMLP)\n{epoch_labels[frame_idx]}", fontweight='bold', pad=15)
+            axs[0].set_xlim(low_range)
+            axs[0].set_ylim(0, y_max)
+            axs[0].grid(True, linestyle='--', alpha=0.5)
+            axs[0].set_ylabel("Density")
+            axs[0].set_xlabel("Value")
+
+            # High Variance
+            axs[1].hist(high_data[frame_idx].flatten(), bins=bins, range=high_range, density=True, color='red',
+                        alpha=0.7, edgecolor='black')
+            axs[1].set_title(f"High Variance (LazyMLP)\n{epoch_labels[frame_idx]}", fontweight='bold', pad=15)
+            axs[1].set_xlim(high_range)
+            axs[1].set_ylim(0, y_max)
+            axs[1].grid(True, linestyle='--', alpha=0.5)
+            axs[1].set_ylabel("Density")
+            axs[1].set_xlabel("Value")
+
+        fig.suptitle(
+            f"Layer 'fc1' {param_type.capitalize()} Distributions over Time\nSimulation: {self.exp_name.capitalize()}",
+            fontweight='bold', fontsize=18, y=0.92)
+
+        anim = animation.FuncAnimation(fig, update, frames=len(low_data), interval=200, repeat=False)
+        plt.close(fig)
+        display(HTML(anim.to_jshtml()))
 
     def plot_mds(self, epochs=(-1,), layer_name='fc1', target_env="Combined", show_config=True, mode='static'):
         if isinstance(epochs, int): epochs = (epochs,)
@@ -292,89 +358,58 @@ class SimulationAnalyzer:
             self._save_fig(f"MDS_grid_{layer_name}_{target_env}_eps_{'_'.join(map(str, epochs))}")
             plt.show()
 
-
         elif mode == 'animation':
 
             from matplotlib import animation
-
-            from IPython.display import display, HTML  # ייבוא הכרחי ל-Colab
+            from IPython.display import display, HTML
 
             fig, axs = plt.subplots(1, 2, figsize=(14, 7))
-
             model_types, titles = ['low', 'high'], ['Low Variance (RichMLP)', 'High Variance (LazyMLP)']
-
             plt.subplots_adjust(wspace=0.2)
 
             def update(frame_idx):
-
                 epoch = epochs[frame_idx]
-
                 for idx, ax in enumerate(axs):
-
                     ax.clear()
-
                     m_type = model_types[idx]
-
                     t_block, t_res, rel_ep, cur_ep = None, None, 0, 0
 
                     for b_name, b_res in self.results:
-
                         n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"][target_env])
-
                         if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
                             t_block, t_res, rel_ep = b_name, b_res[f"data_{m_type}"], (n_eps - 1) if epoch == -1 else (
-
                                     epoch - cur_ep)
-
                             break
-
                         cur_ep += n_eps
 
                     if t_res is None:
                         ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red',
-
                                 fontsize=12)
-
                         ax.axis('off')
-
                         continue
 
                     dist_mat = squareform(t_res["activation_distances_clean"][target_env][rel_ep][layer_name])
-
                     coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
-
                         dist_mat)
-
                     env_X = t_res["envs_data"][target_env]["X"]
 
                     ax.scatter(coords[:, 0], coords[:, 1], color='#85C1E9', s=130, edgecolors='#1B4F72', alpha=0.85)
 
                     ft = self.config["features_types"]
-
                     for i, coord in enumerate(coords):
-
                         f_str, s_idx = [], 0
-
                         for dim in ft:
                             feat_slice = env_X[i][s_idx:s_idx + dim]
-
                             f_str.append("-" if np.sum(feat_slice) == 0 else str(np.argmax(feat_slice)))
-
                             s_idx += dim
-
                         ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
-
                                     fontsize=9, fontweight='bold', color='#444444')
 
                     ax.margins(0.15)
-
                     ax.grid(True, linestyle='--', alpha=0.5)
-
                     ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch == -1 else epoch} | Block: {t_block}",
-
                                  fontweight='bold', fontsize=13)
 
             self.anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=800, repeat=True)
-
             plt.close(fig)
             display(HTML(self.anim.to_jshtml()))

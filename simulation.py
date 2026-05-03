@@ -5,11 +5,9 @@ import torch.optim as optim
 import numpy as np
 from sklearn.metrics.pairwise import pairwise_distances
 from functools import partial
-from torch.utils.tensorboard import SummaryWriter
 import os
 from core_ml import Dataset, MLP, train_model
 from classification_rules import RULES_REGISTRY
-import shutil
 import sys
 import contextlib
 from copy import deepcopy
@@ -29,50 +27,30 @@ class Simulation:
         torch.manual_seed(self.global_config["seed"])
         np.random.seed(self.global_config["seed"])
 
-    def run(self, track_metrics=True, tensorboard_writer=False):
+    def run(self, track_metrics=True):
         self.track_metrics = track_metrics
         simulation_results = []
         optimizers, models = {"low": None, "high": None}, {"low": None, "high": None}
         test_envs = {}
-        tb_writers = None
-
-        # --- Initialize TensorBoard Writers ---
-        # Creates a folder named runs/Experiment_Name containing two subfolders for the models
-        if tensorboard_writer:
-            exp_name = self.global_config.get("exp_name", "experiment").replace(" ", "_")
-            base_log_dir = os.path.join("colab", "runs", exp_name)
-            if os.path.exists(base_log_dir):
-                shutil.rmtree(base_log_dir)
-            os.makedirs(os.path.dirname(base_log_dir), exist_ok=True)
-            tb_writers = {
-                "low": SummaryWriter(os.path.join(base_log_dir, "Low_Variance")),
-                "high": SummaryWriter(os.path.join(base_log_dir, "High_Variance"))
-            }
-        # --------------------------------------
 
         for i, block in enumerate(self.global_config["exp_blocks"]):
             block_config = self.get_block_configs(block)
             self._sync_environments(i, block_config, test_envs)
 
-            block_results = self.run_block(models, optimizers, block_config, test_envs, tb_writers)
+            block_results = self.run_block(models, optimizers, block_config, test_envs)
             models["low"], models["high"] = block_results["model_low"], block_results["model_high"]
             optimizers["low"], optimizers["high"] = block_results["optimizer_low"], block_results["optimizer_high"]
             simulation_results.append([block_config["block_name"], block_results])
 
-        if tb_writers:
-            tb_writers["low"].close()
-            tb_writers["high"].close()
-
         return simulation_results
 
-    def run_block(self, models, optimizers, cfg, test_envs, tb_writers=None):
+    def run_block(self, models, optimizers, cfg, test_envs):
         print(f"\n--- Running Block: {cfg['block_name']} ---")
         rule_name = cfg.get("rule", "upper_half")
         rule_to_apply = partial(RULES_REGISTRY[rule_name], **cfg)
         X, y = self.dataset.get_block_data(cfg.get("zero_features", []), rule_to_apply)
         X, y = X.to(self.device), y.to(self.device)
         noise_mask = get_noise_mask(cfg, X).to(self.device)
-        tb_writers = {"low":None, "high":None} if not tb_writers else tb_writers
 
         data_low = create_tracker(test_envs, X, y)
         data_high = create_tracker(test_envs, X, y)
@@ -97,8 +75,8 @@ class Simulation:
             models["low"], optimizers["low"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_low, cfg, test_envs,
-                                                tb_writers["low"]) if self.track_metrics else lambda m, x, c: None
+            metric_callback=get_metric_callback(data_low, cfg, test_envs) if self.track_metrics else lambda m, x,
+                                                                                                            c: None
         )
 
         # ==========================================
@@ -121,8 +99,8 @@ class Simulation:
             models["high"], optimizers["high"], X, y,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_high, cfg, test_envs,
-                                                tb_writers["high"]) if self.track_metrics else lambda m, x, c: None
+            metric_callback=get_metric_callback(data_high, cfg, test_envs) if self.track_metrics else lambda m, x,
+                                                                                                             c: None
         )
 
         return {
@@ -239,7 +217,7 @@ def get_noise_mask(block_config, X):
 
 def create_tracker(test_envs, X_train, y_train):
     tracker = {
-        "noised_data": [], "fc1_weight_sd": [], "fc1_bias_sd": [],
+        "noised_data": [], "fc1_weights": [], "fc1_biases": [],
         "X_train": X_train, "y_train": y_train,
         "envs_data": {env: {"X": data["X"].cpu().numpy(), "y": data["y"].cpu().numpy()} for env, data in
                       test_envs.items()}
@@ -256,28 +234,17 @@ def create_tracker(test_envs, X_train, y_train):
     return tracker
 
 
-def get_metric_callback(tracker, cfg, test_envs, tb_writer=None):
+def get_metric_callback(tracker, cfg, test_envs):
     global_sd = cfg.get("sd", 0)
 
     def callback(current_model, X_noisy, loss_criterion):
 
         tracker["noised_data"].append(X_noisy.cpu().detach().numpy())
-        tracker["fc1_weight_sd"].append(current_model._layers.fc1.weight.std().item())
-        tracker["fc1_bias_sd"].append(
-            current_model._layers.fc1.bias.std().item() if current_model._layers.fc1.bias is not None else 0.0)
 
-        # TensorBoard logging block (grouped together)
-        if tb_writer is not None:
-            # Lazy initialization for the global step
-            if not hasattr(tb_writer, "global_step"):
-                tb_writer.global_step = 0
-            current_step = tb_writer.global_step
-            tb_writer.global_step += 1
-
-            # Log the histograms:
-            for name, param in current_model._layers.named_parameters():
-                if "fc_last" not in name:
-                    tb_writer.add_histogram(f"Distributions/{name}", param.detach(), current_step)
+        # Fixed: Saving the full numpy arrays instead of calling .item() on matrices
+        tracker["fc1_weights"].append(current_model._layers.fc1.weight.detach().cpu().numpy().copy())
+        bias = current_model._layers.fc1.bias
+        tracker["fc1_biases"].append(bias.detach().cpu().numpy().copy() if bias is not None else 0.0)
 
         for env_name, env_data in test_envs.items():
             X_env = env_data["X"]
@@ -343,8 +310,29 @@ def get_network_activations(model, x):
     return activations
 
 
-# running functions
+# ==========================================
+# Running Functions
+# ==========================================
 
+@contextlib.contextmanager
+def suppress_output():
+    with open(os.devnull, 'w') as devnull:
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = devnull, devnull
+        try:
+            yield
+        finally:
+            sys.stdout, sys.stderr = old_stdout, old_stderr
+
+
+import numpy as np
+import os
+import sys
+import contextlib
+import torch
+from copy import deepcopy
+from tqdm import tqdm
+from simulation import Simulation, create_tracker
 
 @contextlib.contextmanager
 def suppress_output():
@@ -363,13 +351,14 @@ def averaged_simulation(config, n):
         cfg = deepcopy(config)
         cfg["seed"] = i
         with suppress_output():
-            simulations.append(Simulation(cfg).run(track_metrics=True, tensorboard_writer=False))
+            simulations.append(Simulation(cfg).run(track_metrics=True))
 
     avg_sim = simulations[0]
     dummy_tracker = create_tracker({"Dummy": {"X": torch.zeros(1), "y": torch.zeros(1)}}, torch.zeros(1), torch.zeros(1))
 
     non_avg = {"noised_data", "X_train", "y_train", "envs_data", "activations_clean"}
-    metrics = [k for k in dummy_tracker.keys() if k not in non_avg and k != "activation_distances_clean"]
+    concat_metrics = {"fc1_weights", "fc1_biases"}
+    metrics = [k for k in dummy_tracker.keys() if k not in non_avg and k not in concat_metrics and k != "activation_distances_clean"]
 
     for b_idx in range(len(avg_sim)):
         for dm in ["data_low", "data_high"]:
@@ -386,5 +375,9 @@ def averaged_simulation(config, n):
                 for ep in range(len(t_dist[env])):
                     for layer in t_dist[env][ep]:
                         t_dist[env][ep][layer] = np.mean([s[b_idx][1][dm]["activation_distances_clean"][env][ep][layer] for s in simulations], axis=0)
+
+            for m in concat_metrics:
+                for ep in range(len(avg_sim[b_idx][1][dm][m])):
+                    avg_sim[b_idx][1][dm][m][ep] = np.concatenate([s[b_idx][1][dm][m][ep] for s in simulations], axis=None)
 
     return avg_sim
