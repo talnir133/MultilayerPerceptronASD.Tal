@@ -5,22 +5,18 @@ from gui_app import launch_gui
 from dynamic_ranges import IDR_check
 
 CONFIG = {
-    "exp_name": "S1",
-    "features_types": [4,4],
-    "hidden_size": 30,
-    "n_hidden": 1,
-    "b_scale_low": 0,
-    "b_scale_high": 0,
-    "w_scale_low": 0.1,
-    "w_scale_high": 50,
-    "optimizer_type": "Adam",
-    "activation_type": "Identity",
-    "batch_size": 1,
-    "lr" : 0.001,
-    "seed": 0,
-    "sd": 0.2,
+    "exp_name": "Summerfield_Replication",
+    "features_types": [4, 4, 4, 4],
+    "hidden_size": 30, "n_hidden": 1,
+    "b_scale_low": 0.0, "b_scale_high": 0.0,
+    "w_scale_low": 0.1, "w_scale_high": 50.0,
+    "optimizer_type": "Adam", "activation_type": "Identity",
+    "batch_size": 1, "seed": 42, "sd": 0.0, "lr": 0.004,
     "exp_blocks": [
-        {"block_name": "M1", "rule": "upper_half", "zero_features": (), "epochs": 100, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0}]}
+        {"block_name": "M1", "rule": "upper_half", "zero_features": (2, 3), "epochs": 10, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0},
+        {"block_name": "M1_flex", "rule": "upper_half", "zero_features": (2, 3), "epochs": 10, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 1}
+    ]
+}
 
 
 def run_simulation(config_source):
@@ -38,22 +34,22 @@ if __name__ == '__main__':
     # Simulation Running
     # s = run_simulation("gui")
     # s = run_simulation("test")
-    # s = run_simulation(CONFIG)
+    s = run_simulation(CONFIG)
     # s.plot_mae()
     # s.plot_mae(sub_type="noisy")
     # s.plot_mds((0,2,18), mode='animation')
     # s.plot_loss(sub_type="noisy")
-    # s.plot_accuracy(sub_type="noisy")
+    s.plot_accuracy()
     # s.plot_parameters_std()
     #
-    drs = IDR_check(sd=0.5,
-                    activation_type="Tanh",
-                    w_scale_low=0.1,
-                    w_scale_high=0.1,
-                    b_scale_low=0.1,
-                    b_scale_high=2,
-                    epochs=50)
+    # drs = IDR_check(sd=0.5,
+    #                 activation_type="Tanh",
+    #                 w_scale_low=0.1,
+    #                 w_scale_high=0.1,
+    #                 b_scale_low=0.1,
+    #                 b_scale_high=2,
+    #                 epochs=50)
 
     # drs.plot_sigmoids(seed=0)
     # drs.plot_histograms(20)
-    drs.plot_sigmoid_SDs(samples_per_b_w = 50, b_range=(0.1, 2), w_range=(0.1, 20), dots_density = 10)
+    # drs.plot_sigmoid_SDs(samples_per_b_w = 50, b_range=(0.1, 2), w_range=(0.1, 20), dots_density = 10)

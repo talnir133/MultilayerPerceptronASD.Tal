@@ -150,6 +150,7 @@ class SimulationAnalyzer:
 
                 ax.plot(env_data_low[env], label=f'Low Var ({env})', color=c_low, linewidth=2, linestyle='-')
                 ax.plot(env_data_high[env], label=f'High Var ({env})', color=c_high, linewidth=2, linestyle='-')
+                print([env_data_low[env], env_data_high[env]]) # למחוק
 
                 if self.config.get("sd", 0) > 0.0 and env_data_opt[env]:
                     rgb_low = np.array(mcolors.to_rgb(c_low))

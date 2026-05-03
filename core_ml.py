@@ -31,10 +31,15 @@ class Dataset:
             X[:, offsets[i]: offsets[i + 1]] = 0
 
         y_class = rule_func(self.names).view(-1, 1)
-        y_rec = self.exp_X.clone()
-        y_full = torch.cat((y_class, y_rec), dim=1)
+        y_rec = X.clone()
+        # y_full = torch.cat((y_class, y_rec), dim=1)
+        y_full = y_class # למחוק (ואת השורה למעלה לתקן)
 
-        unique_data = torch.unique(torch.cat((X, y_full), dim=1), dim=0)
+        combined = torch.cat((X, y_full), dim=1)
+        _, idx = np.unique(combined.cpu().numpy(), axis=0, return_index=True)
+        idx.sort()
+        unique_data = combined[idx]
+
         D = self.exp_X.shape[1]
         block_X, block_y = unique_data[:, :D], unique_data[:, D:]
         return block_X, block_y
@@ -66,13 +71,10 @@ class MLP(nn.Module):
 
     def reinitialize(self):
         for name, m in self.named_modules():
-            if isinstance(m, nn.Linear):
+            if 'fc1' in name:
+                nn.init.xavier_normal_(m.weight, gain=self.w_scale)
                 if bool(self.b_scale):
                     nn.init.normal_(m.bias, 0, self.b_scale)
-                if 'fc1' in name:
-                    nn.init.xavier_normal_(m.weight, gain=self.w_scale)
-                else:
-                    nn.init.xavier_normal_(m.weight)
 
 
 def train_model(model, optimizer, X_base, y, epochs, batch_size, noise_sd, noise_mask, alpha_class,
