@@ -10,6 +10,10 @@ import os
 from core_ml import Dataset, MLP, train_model
 from classification_rules import RULES_REGISTRY
 import shutil
+import sys
+import contextlib
+from copy import deepcopy
+from tqdm import tqdm
 
 
 class Simulation:
@@ -209,7 +213,7 @@ class Simulation:
 
     def _get_signatures(self, b_cfg):
         zf = b_cfg.get("zero_features", [])
-        domain_sig = f"Domain(Zero:{','.join(map(str, sorted(zf))) or 'None'})"
+        domain_sig = f"Zero-Features:{','.join(map(str, sorted(zf))) or 'None'})"
         rule_sig = f"{b_cfg.get('rule')}_{b_cfg.get('deciding_feature', '')}"
         return domain_sig, rule_sig
 
@@ -337,3 +341,50 @@ def get_network_activations(model, x):
         out = layer(out)
         activations[name] = out.detach().cpu().numpy()
     return activations
+
+
+# running functions
+
+
+@contextlib.contextmanager
+def suppress_output():
+    with open(os.devnull, 'w') as devnull:
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = devnull, devnull
+        try:
+            yield
+        finally:
+            sys.stdout, sys.stderr = old_stdout, old_stderr
+
+def averaged_simulation(config, n):
+    simulations = []
+
+    for i in tqdm(range(n), desc="Simulations Progress"):
+        cfg = deepcopy(config)
+        cfg["seed"] = i
+        with suppress_output():
+            simulations.append(Simulation(cfg).run(track_metrics=True, tensorboard_writer=False))
+
+    avg_sim = simulations[0]
+    dummy_tracker = create_tracker({"Dummy": {"X": torch.zeros(1), "y": torch.zeros(1)}}, torch.zeros(1), torch.zeros(1))
+
+    non_avg = {"noised_data", "X_train", "y_train", "envs_data", "activations_clean"}
+    metrics = [k for k in dummy_tracker.keys() if k not in non_avg and k != "activation_distances_clean"]
+
+    for b_idx in range(len(avg_sim)):
+        for dm in ["data_low", "data_high"]:
+            for m in metrics:
+                target = avg_sim[b_idx][1][dm][m]
+                if isinstance(target, dict):
+                    for env in target:
+                        target[env] = np.mean([s[b_idx][1][dm][m][env] for s in simulations], axis=0).tolist()
+                else:
+                    avg_sim[b_idx][1][dm][m] = np.mean([s[b_idx][1][dm][m] for s in simulations], axis=0).tolist()
+
+            t_dist = avg_sim[b_idx][1][dm]["activation_distances_clean"]
+            for env in t_dist:
+                for ep in range(len(t_dist[env])):
+                    for layer in t_dist[env][ep]:
+                        t_dist[env][ep][layer] = np.mean([s[b_idx][1][dm]["activation_distances_clean"][env][ep][layer] for s in simulations], axis=0)
+
+    return avg_sim

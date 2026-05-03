@@ -39,7 +39,7 @@ class SimulationAnalyzer:
         """Helper to identify domains and rules just like the simulation does."""
         zf = b_cfg.get("zero_features", [])
         zf_list = list(zf) if isinstance(zf, (list, tuple)) else ([zf] if zf is not None else [])
-        domain_sig = f"Domain(Zero:{','.join(map(str, sorted(zf_list))) or 'None'})"
+        domain_sig = f"(Zero-Features:{','.join(map(str, sorted(zf_list))) or 'None'})"
         rule_sig = f"{b_cfg.get('rule')}_{b_cfg.get('deciding_feature', '')}"
         return domain_sig, rule_sig
 
@@ -172,7 +172,7 @@ class SimulationAnalyzer:
 
         for i in range(len(blocks)):
             ax.text((bounds[i] + bounds[i + 1]) / 2, -0.06, blocks[i], transform=ax.get_xaxis_transform(), ha='center',
-                    va='top', fontsize=10, fontweight='bold', color='darkblue')
+                    va='top', fontsize=8, fontweight='bold', color='darkblue')
 
         ax.set(xlabel='Epochs', ylabel=ylabel)
         ax.xaxis.labelpad = 20

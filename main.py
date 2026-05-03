@@ -1,5 +1,5 @@
 import json
-from simulation import Simulation
+from simulation import Simulation, averaged_simulation
 from analysis import SimulationAnalyzer
 from gui_app import launch_gui
 from dynamic_ranges import IDR_check
@@ -11,7 +11,7 @@ CONFIG = {
     "b_scale_low": 0.0, "b_scale_high": 0.0,
     "w_scale_low": 0.1, "w_scale_high": 50.0,
     "optimizer_type": "Adam", "activation_type": "Identity",
-    "batch_size": 1, "seed": 42, "sd": 0.0, "lr": 0.004,
+    "batch_size": 1, "seed": 0, "sd": 0.0, "lr": 0.004,
     "exp_blocks": [
         {"block_name": "M1", "rule": "upper_half", "zero_features": (2, 3), "epochs": 10, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0},
         {"block_name": "M1_flex", "rule": "upper_half", "zero_features": (2, 3), "epochs": 10, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 1}
@@ -30,12 +30,14 @@ def run_simulation(config_source):
     return SimulationAnalyzer(Simulation(config).run(), config) if config else None
 
 
+
 if __name__ == '__main__':
     # Simulation Running
     # s = run_simulation("gui")
     # s = run_simulation("test")
-    s = run_simulation(CONFIG)
-    # s.plot_mae()
+    s = averaged_simulation(CONFIG,25)
+    s = SimulationAnalyzer(s, CONFIG)
+    s.plot_mae()
     # s.plot_mae(sub_type="noisy")
     # s.plot_mds((0,2,18), mode='animation')
     # s.plot_loss(sub_type="noisy")
