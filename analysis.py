@@ -203,10 +203,6 @@ class SimulationAnalyzer:
         self._plot_standard_metric("MAE", "Mean Absolute Error", sub_type, False, show_config)
 
     def plot_parameter_distributions(self, param_type="weights", bins=50, show_config=True):
-        """
-        Creates an animation showing the distribution of weights or biases over all epochs.
-        param_type: "weights" or "biases"
-        """
         from matplotlib import animation
         from IPython.display import display, HTML
 
@@ -216,7 +212,6 @@ class SimulationAnalyzer:
         key = f"fc1_{param_type}"
         low_data, high_data, epoch_labels = [], [], []
 
-        # Extract all epochs sequentially across all blocks
         for b_name, b_res in self.results:
             l_params = b_res["data_low"][key]
             h_params = b_res["data_high"][key]
@@ -225,63 +220,54 @@ class SimulationAnalyzer:
             epoch_labels.extend([f"Block: {b_name} | Epoch: {i}" for i in range(len(l_params))])
 
         if not low_data:
-            print(f"No data found for {param_type}.")
             return
 
-        # Calculate individual min/max for dynamic X-axes to fix the scale issue
         all_low = np.concatenate([d.flatten() for d in low_data])
         all_high = np.concatenate([d.flatten() for d in high_data])
 
-        low_min, low_max = all_low.min(), all_low.max()
-        high_min, high_max = all_high.min(), all_high.max()
+        low_min, low_max = np.percentile(all_low, 0.5), np.percentile(all_low, 99.5)
+        high_min, high_max = np.percentile(all_high, 0.5), np.percentile(all_high, 99.5)
 
-        # Add a tiny padding to the bounds to prevent clipping on the edges
         low_pad = (low_max - low_min) * 0.05
         high_pad = (high_max - high_min) * 0.05
 
         low_range = (low_min - low_pad, low_max + low_pad)
         high_range = (high_min - high_pad, high_max + high_pad)
 
-        # Find the maximum bin density for the Y axis (using density=True)
-        y_max = 0
+        y_max_low, y_max_high = 0, 0
         for l, h in zip(low_data, high_data):
             c_l, _ = np.histogram(l.flatten(), bins=bins, range=low_range, density=True)
             c_h, _ = np.histogram(h.flatten(), bins=bins, range=high_range, density=True)
-            y_max = max(y_max, c_l.max(), c_h.max())
-        y_max = y_max * 1.1
+            y_max_low = max(y_max_low, c_l.max())
+            y_max_high = max(y_max_high, c_h.max())
 
-        # Adjust height to give titles more room
+        y_max_low *= 1.1
+        y_max_high *= 1.1
+
         fig, axs = plt.subplots(1, 2, figsize=(14, 7))
-
-        # Hardcoded margins to strictly prevent title overlap
-        plt.subplots_adjust(top=0.75, bottom=0.15, wspace=0.3, right=0.75 if show_config else 0.95)
+        plt.subplots_adjust(top=0.75, bottom=0.15, wspace=0.3, right=0.65 if show_config else 0.95)
 
         if show_config:
-            p_top = axs[1].get_position()
-            g_top = fig.add_axes([p_top.x0 + 0.15, p_top.y0, p_top.width, p_top.height])
-            g_top.axis('off')
-            self._add_config_info(g_top, show_config)
+            self._add_config_info(axs[1], show_config)
 
         def update(frame_idx):
             for ax in axs:
                 ax.clear()
 
-            # Low Variance
             axs[0].hist(low_data[frame_idx].flatten(), bins=bins, range=low_range, density=True, color='blue',
                         alpha=0.7, edgecolor='black')
             axs[0].set_title(f"Low Variance (RichMLP)\n{epoch_labels[frame_idx]}", fontweight='bold', pad=15)
             axs[0].set_xlim(low_range)
-            axs[0].set_ylim(0, y_max)
+            axs[0].set_ylim(0, y_max_low)
             axs[0].grid(True, linestyle='--', alpha=0.5)
             axs[0].set_ylabel("Density")
             axs[0].set_xlabel("Value")
 
-            # High Variance
             axs[1].hist(high_data[frame_idx].flatten(), bins=bins, range=high_range, density=True, color='red',
                         alpha=0.7, edgecolor='black')
             axs[1].set_title(f"High Variance (LazyMLP)\n{epoch_labels[frame_idx]}", fontweight='bold', pad=15)
             axs[1].set_xlim(high_range)
-            axs[1].set_ylim(0, y_max)
+            axs[1].set_ylim(0, y_max_high)
             axs[1].grid(True, linestyle='--', alpha=0.5)
             axs[1].set_ylabel("Density")
             axs[1].set_xlabel("Value")
@@ -358,22 +344,24 @@ class SimulationAnalyzer:
             self._save_fig(f"MDS_grid_{layer_name}_{target_env}_eps_{'_'.join(map(str, epochs))}")
             plt.show()
 
-        elif mode == 'animation':
 
+        elif mode == 'animation':
             from matplotlib import animation
             from IPython.display import display, HTML
-
+            from scipy.linalg import orthogonal_procrustes
             fig, axs = plt.subplots(1, 2, figsize=(14, 7))
             model_types, titles = ['low', 'high'], ['Low Variance (RichMLP)', 'High Variance (LazyMLP)']
             plt.subplots_adjust(wspace=0.2)
-
+            prev_coords = {'low': None, 'high': None}
             def update(frame_idx):
+                if frame_idx == 0:
+                    prev_coords['low'] = None
+                    prev_coords['high'] = None
                 epoch = epochs[frame_idx]
                 for idx, ax in enumerate(axs):
                     ax.clear()
                     m_type = model_types[idx]
                     t_block, t_res, rel_ep, cur_ep = None, None, 0, 0
-
                     for b_name, b_res in self.results:
                         n_eps = len(b_res[f"data_{m_type}"]["activation_distances_clean"][target_env])
                         if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
@@ -381,20 +369,20 @@ class SimulationAnalyzer:
                                     epoch - cur_ep)
                             break
                         cur_ep += n_eps
-
                     if t_res is None:
                         ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red',
                                 fontsize=12)
                         ax.axis('off')
                         continue
-
                     dist_mat = squareform(t_res["activation_distances_clean"][target_env][rel_ep][layer_name])
                     coords = MDS(n_components=2, dissimilarity='precomputed', random_state=42, n_init=4).fit_transform(
                         dist_mat)
+                    if prev_coords[m_type] is not None:
+                        R, _ = orthogonal_procrustes(coords, prev_coords[m_type])
+                        coords = np.dot(coords, R)
+                    prev_coords[m_type] = coords
                     env_X = t_res["envs_data"][target_env]["X"]
-
                     ax.scatter(coords[:, 0], coords[:, 1], color='#85C1E9', s=130, edgecolors='#1B4F72', alpha=0.85)
-
                     ft = self.config["features_types"]
                     for i, coord in enumerate(coords):
                         f_str, s_idx = [], 0
@@ -404,12 +392,11 @@ class SimulationAnalyzer:
                             s_idx += dim
                         ax.annotate(f"({','.join(f_str)})", coord, xytext=(5, 5), textcoords='offset points',
                                     fontsize=9, fontweight='bold', color='#444444')
-
                     ax.margins(0.15)
                     ax.grid(True, linestyle='--', alpha=0.5)
                     ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch == -1 else epoch} | Block: {t_block}",
                                  fontweight='bold', fontsize=13)
-
             self.anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=800, repeat=True)
             plt.close(fig)
+
             display(HTML(self.anim.to_jshtml()))

@@ -13,16 +13,8 @@ CONFIG = {
     "optimizer_type": "Adam", "activation_type": "Identity",
     "batch_size": 1, "seed": 0, "sd": 0.0, "lr": 0.004,
     "exp_blocks": [
-        {"block_name": "M1", "rule": "upper_half", "zero_features": (2, 3), "epochs": 80, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0},
-        {"block_name": "M2", "rule": "upper_half", "zero_features": (0, 1), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 2},
-        {"block_name": "M1", "rule": "upper_half", "zero_features": (2, 3), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0},
-        {"block_name": "M2-Flex", "rule": "upper_half", "zero_features": (0, 1), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 3},
-        {"block_name": "M1-Flex", "rule": "upper_half", "zero_features": (2, 3), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 1},
-        {"block_name": "M2-Flex", "rule": "upper_half", "zero_features": (0, 1), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 3},
-        {"block_name": "M1-Flex", "rule": "upper_half", "zero_features": (2, 3), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 1},
-        {"block_name": "M2-Flex", "rule": "upper_half", "zero_features": (0, 1), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 3},
-        {"block_name": "M1-Flex", "rule": "upper_half", "zero_features": (2, 3), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 1},
-    ]
+        {"block_name": "B1", "rule": "upper_half", "zero_features": (2, 3), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0},
+        {"block_name": "B2", "rule": "upper_half", "zero_features": (0, 1), "epochs": 20, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 2}]
 }
 
 
@@ -44,12 +36,13 @@ if __name__ == '__main__':
     # s = run_simulation("test")
     s = averaged_simulation(CONFIG,5)
     s = SimulationAnalyzer(s, CONFIG)
-    s.plot_mae()
+    # s.plot_mae()
     # s.plot_mae(sub_type="noisy")
     # s.plot_mds((0,2,18), mode='animation')
     # s.plot_loss(sub_type="noisy")
-    s.plot_accuracy()
+    # s.plot_accuracy()
     s.plot_parameter_distributions()
+    s.plot_mds(tuple(range(20)), mode='animation')
     #
     # drs = IDR_check(sd=0.5,
     #                 activation_type="Tanh",
