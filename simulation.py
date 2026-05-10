@@ -118,6 +118,7 @@ class Simulation:
         block_config["output_size"] = 1 + block_config["input_size"]
         block_config.setdefault("alpha_class", 1.0)
         block_config.setdefault("alpha_rec", 0.0)
+        block_config.setdefault("sd", 0.0)
         opt_map = {"Adam": optim.Adam, "SGD": optim.SGD}
         block_config["optimizer_type"] = opt_map[block_config["optimizer_type"]]
 
@@ -240,7 +241,7 @@ def create_tracker(test_envs, X_train, y_train):
 
 
 def get_metric_callback(tracker, cfg, test_envs):
-    global_sd = cfg.get("sd", 0)
+    sd = cfg.get("sd", 0)
 
     def callback(current_model, X_noisy, loss_criterion):
         tracker["noised_data"].append(X_noisy.cpu().detach().numpy())
@@ -271,10 +272,10 @@ def get_metric_callback(tracker, cfg, test_envs):
             tracker["accuracies_clean"][env_name].append(
                 ((clean_probs > 0.5) == y_env.bool()).float().mean().item())
 
-            if global_sd > 0:
-                X_noisy_env = X_env + (torch.randn_like(X_env) * global_sd * env_data["mask"])
+            if sd > 0:
+                X_noisy_env = X_env + (torch.randn_like(X_env) * sd * env_data["mask"])
                 noisy_preds = current_model(X_noisy_env)[:, 0:1]
-                opt_probs = get_bayes_optimal_probabilities(X_noisy_env, global_sd, X_env, y_env)
+                opt_probs = get_bayes_optimal_probabilities(X_noisy_env, sd, X_env, y_env)
                 model_probs = torch.sigmoid(noisy_preds)
 
                 tracker["losses_noisy"][env_name].append(loss_criterion(noisy_preds, y_env).item())

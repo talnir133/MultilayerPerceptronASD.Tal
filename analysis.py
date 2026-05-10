@@ -50,7 +50,7 @@ class SimulationAnalyzer:
         txt = r"$\mathbf{Simulation\ Configurations:}$" + "\n\n"
 
         categories = {
-            "Input:": ['features_types', 'seed', 'sd'],
+            "Input:": ['features_types', 'seed'],
             "Network:": ['hidden_size', 'n_hidden', 'b_scale_low', 'b_scale_high',
                          'w_scale_low', 'w_scale_high', 'optimizer_type', 'activation_type', 'batch_size', 'lr']
         }
@@ -71,10 +71,11 @@ class SimulationAnalyzer:
             rule_name = block.get('rule', 'upper_half')
             a_class = block.get('alpha_class', 1)
             a_rec = block.get('alpha_rec', 0)
+            b_sd = block.get('sd', 0.0)
             rule_params = [f"{k}={v}" for k, v in block.items() if
-                           k not in ['block_name', 'epochs', 'zero_features', 'rule', 'alpha_class', 'alpha_rec']]
+                           k not in ['block_name', 'epochs', 'zero_features', 'rule', 'alpha_class', 'alpha_rec', 'sd']]
             params_str = f"({', '.join(rule_params)})" if rule_params else ""
-            txt += f"   {idx}. {block.get('block_name', 'Unnamed')}, eps: {block.get('epochs', 0)}, zero: {zf_str}, a_c: {a_class}, a_r: {a_rec}\n"
+            txt += f"   {idx}. {block.get('block_name', 'Unnamed')}, eps: {block.get('epochs', 0)}, zero: {zf_str}, a_c: {a_class}, a_r: {a_rec}, sd: {b_sd}\n"
             txt += f"      Rule: {rule_name} {params_str}\n"
 
         ax.text(1.05, 0.985, txt.strip(), transform=ax.transAxes, fontsize=7, va='top',
@@ -105,6 +106,8 @@ class SimulationAnalyzer:
                             active_rules[target_d_sig] = fut_r_sig
                             break
 
+        has_noise = any(b.get("sd", 0.0) > 0 for b in self.config.get("exp_blocks", []))
+
         if not is_env_based:
             low, high = [], []
             for name, res in self.results:
@@ -132,11 +135,25 @@ class SimulationAnalyzer:
 
             for name, res in self.results:
                 for env in envs:
-                    env_data_low[env].extend(res["data_low"][metric_name][env])
-                    env_data_high[env].extend(res["data_high"][metric_name][env])
-                    opt_key = f"{metric_name}_optimal"
-                    if opt_key in res["data_low"] and env in res["data_low"].get(opt_key, {}):
-                        env_data_opt[env].extend(res["data_low"][opt_key][env])
+                    main_low = res["data_low"][metric_name][env]
+                    main_high = res["data_high"][metric_name][env]
+
+                    if not main_low:
+                        clean_metric = metric_name.replace("_noisy", "_clean")
+                        main_low = res["data_low"][clean_metric][env]
+                        main_high = res["data_high"][clean_metric][env]
+
+                    env_data_low[env].extend(main_low)
+                    env_data_high[env].extend(main_high)
+
+                    if has_noise:
+                        opt_key = f"{metric_name}_optimal"
+                        opt_data = res["data_low"].get(opt_key, {}).get(env, [])
+                        if not opt_data:
+                            clean_metric = metric_name.replace("_noisy", "_clean")
+                            opt_data = res["data_low"][clean_metric][env]
+                        env_data_opt[env].extend(opt_data)
+
                 bounds.append(len(env_data_low[envs[0]]))
                 blocks.append(name)
 
@@ -146,7 +163,7 @@ class SimulationAnalyzer:
                 ax.plot(env_data_low[env], label=f'Low Var ({env})', color=c_low, linewidth=2, linestyle='-')
                 ax.plot(env_data_high[env], label=f'High Var ({env})', color=c_high, linewidth=2, linestyle='-')
 
-                if self.config.get("sd", 0) > 0.0 and env_data_opt[env]:
+                if has_noise and env_data_opt[env]:
                     rgb_low = np.array(mcolors.to_rgb(c_low))
                     rgb_high = np.array(mcolors.to_rgb(c_high))
                     c_avg = tuple((rgb_low + rgb_high) / 2.0)
@@ -186,9 +203,13 @@ class SimulationAnalyzer:
         plt.show()
 
     def _plot_standard_metric(self, metric_base, title_base, sub_type="clean", log_scale=False, show_config=True):
-        sd = self.config.get("sd", 0)
-        actual_sub_type = "clean" if sd == 0 else sub_type
-        y_axis_name = title_base if sd == 0 else f"{title_base} (on {actual_sub_type} data)"
+        has_noise = any(b.get("sd", 0.0) > 0 for b in self.config.get("exp_blocks", []))
+
+        actual_sub_type = sub_type
+        if sub_type == "noisy" and not has_noise:
+            actual_sub_type = "clean"
+
+        y_axis_name = f"{title_base} (on {actual_sub_type} data)" if actual_sub_type == "noisy" else title_base
         metric_key = f"{metric_base}_{actual_sub_type}"
 
         self._graph_template(metric_key, y_axis_name, log_scale, show_config)
@@ -353,6 +374,7 @@ class SimulationAnalyzer:
             model_types, titles = ['low', 'high'], ['Low Variance (RichMLP)', 'High Variance (LazyMLP)']
             plt.subplots_adjust(wspace=0.2)
             prev_coords = {'low': None, 'high': None}
+
             def update(frame_idx):
                 if frame_idx == 0:
                     prev_coords['low'] = None
@@ -396,6 +418,7 @@ class SimulationAnalyzer:
                     ax.grid(True, linestyle='--', alpha=0.5)
                     ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch == -1 else epoch} | Block: {t_block}",
                                  fontweight='bold', fontsize=13)
+
             self.anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=800, repeat=True)
             plt.close(fig)
 
