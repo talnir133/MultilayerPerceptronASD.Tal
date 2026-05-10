@@ -48,8 +48,10 @@ class Simulation:
         print(f"\n--- Running Block: {cfg['block_name']} ---")
         rule_name = cfg.get("rule", "upper_half")
         rule_to_apply = partial(RULES_REGISTRY[rule_name], **cfg)
-        X, y = self.dataset.get_block_data(cfg.get("zero_features", []), rule_to_apply)
-        X, y = X.to(self.device), y.to(self.device)
+
+        X = self.dataset.get_block_data(cfg.get("zero_features", []))
+        X = X.to(self.device)
+        y = rule_to_apply(X).to(self.device)
         noise_mask = get_noise_mask(cfg, X).to(self.device)
 
         data_low = create_tracker(test_envs, X, y)
@@ -72,7 +74,7 @@ class Simulation:
             optimizers["low"] = cfg["optimizer_type"](models["low"].parameters(), lr=cfg.get("lr", 0.004))
 
         model_low, optimizer_low = train_model(
-            models["low"], optimizers["low"], X, y,
+            models["low"], optimizers["low"], X, rule_to_apply,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
             metric_callback=get_metric_callback(data_low, cfg, test_envs) if self.track_metrics else lambda m, x,
@@ -96,7 +98,7 @@ class Simulation:
             optimizers["high"] = cfg["optimizer_type"](models["high"].parameters(), lr=cfg.get("lr", 0.004))
 
         model_high, optimizer_high = train_model(
-            models["high"], optimizers["high"], X, y,
+            models["high"], optimizers["high"], X, rule_to_apply,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
             metric_callback=get_metric_callback(data_high, cfg, test_envs) if self.track_metrics else lambda m, x,
@@ -108,7 +110,6 @@ class Simulation:
             "model_low": model_low, "optimizer_low": optimizer_low, "data_low": data_low,
             "model_high": model_high, "optimizer_high": optimizer_high, "data_high": data_high
         }
-
     def get_block_configs(self, block):
         block_config = copy.deepcopy(self.global_config)
         block_config.update(block)
@@ -138,12 +139,14 @@ class Simulation:
 
                 if domain_sig not in test_envs:
                     r_func = partial(RULES_REGISTRY[b_cfg["rule"]], **b_cfg)
-                    X_test, y_test = self.dataset.get_block_data(b_cfg["zero_features"], r_func)
+                    X_test = self.dataset.get_block_data(b_cfg["zero_features"])
+                    y_test = r_func(X_test)
 
                     test_envs[domain_sig] = {
                         "X": X_test.to(self.device),
                         "y": y_test[:, 0:1].to(self.device),
-                        "mask": get_noise_mask(b_cfg, X_test).to(self.device)
+                        "mask": get_noise_mask(b_cfg, X_test).to(self.device),
+                        "rule_func": r_func
                     }
                     self.active_rules[domain_sig] = rule_sig
 
@@ -165,9 +168,11 @@ class Simulation:
 
                 if loop_d_sig == d_sig:
                     r_func = partial(RULES_REGISTRY[b_cfg.get("rule", "upper_half")], **b_cfg)
-                    _, y_test = self.dataset.get_block_data(b_cfg.get("zero_features", []), r_func)
+                    X_test_temp = self.dataset.get_block_data(b_cfg.get("zero_features", []))
+                    y_test = r_func(X_test_temp)
 
                     test_envs[d_sig]["y"] = y_test[:, 0:1].to(self.device)
+                    test_envs[d_sig]["rule_func"] = r_func
                     self.active_rules[d_sig] = loop_r_sig
                     break
 
@@ -238,17 +243,19 @@ def get_metric_callback(tracker, cfg, test_envs):
     global_sd = cfg.get("sd", 0)
 
     def callback(current_model, X_noisy, loss_criterion):
-
         tracker["noised_data"].append(X_noisy.cpu().detach().numpy())
 
-        # Fixed: Saving the full numpy arrays instead of calling .item() on matrices
         tracker["fc1_weights"].append(current_model._layers.fc1.weight.detach().cpu().numpy().copy())
         bias = current_model._layers.fc1.bias
         tracker["fc1_biases"].append(bias.detach().cpu().numpy().copy() if bias is not None else 0.0)
 
         for env_name, env_data in test_envs.items():
             X_env = env_data["X"]
-            y_env = env_data["y"]
+
+            if "rule_func" in env_data:
+                y_env = env_data["rule_func"](X_env).to(X_env.device)
+            else:
+                y_env = env_data["y"]
 
             acts = get_network_activations(current_model, X_env)
             epoch_act_dist = {}
@@ -283,7 +290,6 @@ def get_metric_callback(tracker, cfg, test_envs):
 
     return callback
 
-
 def get_bayes_optimal_probabilities(noisy_X, noise_sd, clean_X, clean_y):
     """
     Generalized Bayesian optimal predictor.
@@ -313,26 +319,6 @@ def get_network_activations(model, x):
 # ==========================================
 # Running Functions
 # ==========================================
-
-@contextlib.contextmanager
-def suppress_output():
-    with open(os.devnull, 'w') as devnull:
-        old_stdout, old_stderr = sys.stdout, sys.stderr
-        sys.stdout, sys.stderr = devnull, devnull
-        try:
-            yield
-        finally:
-            sys.stdout, sys.stderr = old_stdout, old_stderr
-
-
-import numpy as np
-import os
-import sys
-import contextlib
-import torch
-from copy import deepcopy
-from tqdm import tqdm
-from simulation import Simulation, create_tracker
 
 @contextlib.contextmanager
 def suppress_output():

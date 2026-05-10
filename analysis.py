@@ -273,7 +273,7 @@ class SimulationAnalyzer:
             axs[1].set_xlabel("Value")
 
         fig.suptitle(
-            f"Layer 'fc1' {param_type.capitalize()} Distributions over Time\nSimulation: {self.exp_name.capitalize()}",
+            f"Layer 'fc1' {param_type.capitalize()} Distributions over Time",
             fontweight='bold', fontsize=18, y=0.92)
 
         anim = animation.FuncAnimation(fig, update, frames=len(low_data), interval=200, repeat=False)
