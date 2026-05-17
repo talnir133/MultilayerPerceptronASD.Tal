@@ -76,8 +76,6 @@ def train_model(model, optimizer, X_base, rule_func, epochs, batch_size, noise_s
             X = X_noisy
         else:
             X = X_base
-            print("\nX\n", X)
-            print("\ny\n", y_class)
 
         # 2. Evaluation & External Metric Collection
         model.eval()

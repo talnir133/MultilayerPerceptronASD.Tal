@@ -146,7 +146,7 @@ class SimulationAnalyzer:
                     env_data_low[env].extend(main_low)
                     env_data_high[env].extend(main_high)
 
-                    if has_noise:
+                    if has_noise and "_noisy" in metric_name:
                         opt_key = f"{metric_name}_optimal"
                         opt_data = res["data_low"].get(opt_key, {}).get(env, [])
                         if not opt_data:

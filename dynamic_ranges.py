@@ -25,18 +25,18 @@ def _suppress_output():
 
 class IDR_check:
     def __init__(self, sd=0, activation_type="Identity", optimization_type="Adam",
-                 w_scale_low=0.1, w_scale_high=50, b_scale_low=0, b_scale_high=0, epochs=50, seed=0):
+                 w_scale_low=0.1, w_scale_high=50, b_scale_low=0, b_scale_high=0, epochs=50, seed=0, n_hidden=1):
         self.sd, self.seed, self.epochs = sd, seed, epochs
         self.act_type, self.opt_type = activation_type, optimization_type
         self.w_l, self.w_h = w_scale_low, w_scale_high
         self.b_l, self.b_h = b_scale_low, b_scale_high
 
         self.config = {
-            "exp_name": "idr_check", "features_types": [2], "hidden_size": 30, "n_hidden": 1,
+            "exp_name": "idr_check", "features_types": [2], "hidden_size": 30, "n_hidden": n_hidden,
             "b_scale_low": self.b_l, "b_scale_high": self.b_h, "w_scale_low": self.w_l, "w_scale_high": self.w_h,
             "optimizer_type": self.opt_type, "activation_type": self.act_type, "batch_size": 1,
-            "seed": self.seed, "sd": self.sd,
-            "exp_blocks": [{"block_name": "M1", "rule": "upper_half", "deciding_feature": 0,
+            "seed": self.seed,
+            "exp_blocks": [{"block_name": "M1", "sd": self.sd, "rule": "upper_half", "deciding_feature": 0,
                             "zero_features": (), "epochs": self.epochs, "alpha_class": 1, "alpha_rec": 0}]
         }
 
