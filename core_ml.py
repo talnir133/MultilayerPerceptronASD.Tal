@@ -80,7 +80,7 @@ def train_model(model, optimizer, X_base, rule_func, epochs, batch_size, noise_s
         # 2. Evaluation & External Metric Collection
         model.eval()
         with torch.no_grad():
-            metric_callback(model, X, criterion)
+            metric_callback(model, criterion)
 
         # 3. Training Step
         model.train()
