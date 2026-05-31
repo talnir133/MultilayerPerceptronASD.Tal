@@ -378,7 +378,7 @@ class SimulationAnalyzer:
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
 
-    def plot_PCS(self, epochs=(-1,), layer_name='fc1', show_config=True):
+    def plot_PCs(self, epochs=(-1,), layer_name='fc1', show_config=True):
         if isinstance(epochs, int): epochs = (epochs,)
 
         env_X = self.runs[0][0][1]["data_low"]["X_global"]
@@ -393,62 +393,71 @@ class SimulationAnalyzer:
             f_strs.append(f"({','.join(f_str)})")
 
         unique_labels = sorted(list(set(f_strs)))
-        distinct_rgbs = get_distinct_colors(len(unique_labels))
-        color_map = {lbl: distinct_rgbs[i] for i, lbl in enumerate(unique_labels)}
-
-        legend_elements = [Line2D([0], [0], marker='o', color='w', label=lbl,
-                                  markerfacecolor=color_map[lbl], markersize=10) for lbl in unique_labels]
+        use_binary_colors = len(unique_labels) > 4
 
         n_runs = len(self.runs)
-        total_epochs = sum(len(b_res["data_low"]["activations"]) for _, b_res in self.runs[0])
+        total_epochs_in_sim = sum(len(b_res["data_low"]["activations"]) for _, b_res in self.runs[0])
         N_samples = len(env_X)
 
-        raw_coords = {'low': np.zeros((n_runs, total_epochs, N_samples, 2)),
-                      'high': np.zeros((n_runs, total_epochs, N_samples, 2))}
-        pca_ev = {'low': np.zeros((n_runs, total_epochs, 2)),
-                  'high': np.zeros((n_runs, total_epochs, 2))}
+        target_info = []
+        for epoch in epochs:
+            rel_ep, cur_ep, b_idx, t_block = 0, 0, 0, None
+            for b_name, b_res in self.runs[0]:
+                n_eps = len(b_res["data_low"]["activations"])
+                if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
+                    t_block = b_name
+                    rel_ep = (n_eps - 1) if epoch == -1 else (epoch - cur_ep)
+                    break
+                cur_ep += n_eps
+                b_idx += 1
+            abs_ep = cur_ep + rel_ep if epoch != -1 else total_epochs_in_sim - 1
+            target_info.append((b_idx, rel_ep, abs_ep, t_block, epoch))
+
+        num_frames = len(target_info)
+
+        raw_coords = {'low': np.zeros((n_runs, num_frames, N_samples, 2)),
+                      'high': np.zeros((n_runs, num_frames, N_samples, 2))}
+        pca_ev = {'low': np.zeros((n_runs, num_frames, 2)),
+                  'high': np.zeros((n_runs, num_frames, 2))}
 
         for r_idx, run in enumerate(self.runs):
             for m_type in ['low', 'high']:
-                ep_idx = 0
-                for b_name, b_res in run:
-                    acts_list = b_res[f"data_{m_type}"]["activations"]
-                    for layer_acts in acts_list:
-                        acts = layer_acts[layer_name]
-                        if acts.shape[1] < 2:
-                            acts = np.pad(acts, ((0, 0), (0, 2 - acts.shape[1])))
+                for k, (b_idx, rel_ep, _, _, _) in enumerate(target_info):
+                    acts = run[b_idx][1][f"data_{m_type}"]["activations"][rel_ep][layer_name]
+                    if acts.shape[1] < 2:
+                        acts = np.pad(acts, ((0, 0), (0, 2 - acts.shape[1])))
 
-                        pca = PCA(n_components=2)
-                        if np.all(acts == acts[0]):
-                            c = np.zeros((N_samples, 2))
-                            ev = np.zeros(2)
-                        else:
-                            c = pca.fit_transform(acts)
-                            if c.shape[1] < 2: c = np.pad(c, ((0, 0), (0, 2 - c.shape[1])))
-                            ev = pca.explained_variance_ratio_
-                            if len(ev) < 2: ev = np.pad(ev, (0, 2 - len(ev)))
+                    pca = PCA(n_components=2)
+                    if np.all(acts == acts[0]):
+                        c = np.zeros((N_samples, 2))
+                        ev = np.zeros(2)
+                    else:
+                        c = pca.fit_transform(acts)
+                        if c.shape[1] < 2: c = np.pad(c, ((0, 0), (0, 2 - c.shape[1])))
+                        ev = pca.explained_variance_ratio_
+                        if len(ev) < 2: ev = np.pad(ev, (0, 2 - len(ev)))
 
-                        raw_coords[m_type][r_idx, ep_idx] = c
-                        pca_ev[m_type][r_idx, ep_idx] = ev
-                        ep_idx += 1
+                    raw_coords[m_type][r_idx, k] = c
+                    pca_ev[m_type][r_idx, k] = ev
 
         pca_coords = {'low': np.zeros_like(raw_coords['low']),
                       'high': np.zeros_like(raw_coords['high'])}
 
-        pca_coords['low'][0, 0] = raw_coords['low'][0, 0]
-        for ep in range(1, total_epochs):
-            pca_coords['low'][0, ep] = align_coords_no_reflection(raw_coords['low'][0, ep],
-                                                                  pca_coords['low'][0, ep - 1])
+        if num_frames > 0:
+            pca_coords['low'][0, 0] = raw_coords['low'][0, 0]
+            for k in range(1, num_frames):
+                pca_coords['low'][0, k] = align_coords_no_reflection(raw_coords['low'][0, k],
+                                                                     pca_coords['low'][0, k - 1])
 
-        for ep in range(total_epochs):
-            pca_coords['high'][0, ep] = align_coords_no_reflection(raw_coords['high'][0, ep], pca_coords['low'][0, ep])
+            for k in range(num_frames):
+                pca_coords['high'][0, k] = align_coords_no_reflection(raw_coords['high'][0, k], pca_coords['low'][0, k])
 
-        for r_idx in range(1, n_runs):
-            for ep in range(total_epochs):
-                pca_coords['low'][r_idx, ep] = align_coords_no_reflection(raw_coords['low'][r_idx, ep],
-                                                                          pca_coords['low'][0, ep])
-                pca_coords['high'][r_idx, ep] = align_coords_no_reflection(raw_coords['high'][r_idx, ep],
-                                                                           pca_coords['high'][0, ep])
+            for r_idx in range(1, n_runs):
+                for k in range(num_frames):
+                    pca_coords['low'][r_idx, k] = align_coords_no_reflection(raw_coords['low'][r_idx, k],
+                                                                             pca_coords['low'][0, k])
+                    pca_coords['high'][r_idx, k] = align_coords_no_reflection(raw_coords['high'][r_idx, k],
+                                                                              pca_coords['high'][0, k])
 
         from matplotlib import animation
         from IPython.display import display, HTML
@@ -469,67 +478,128 @@ class SimulationAnalyzer:
         else:
             fig.subplots_adjust(right=0.88, top=0.90, wspace=0.2, hspace=0.3)
 
+        x_vals = [info[2] for info in target_info]
+
         vlines = {}
         for m_type, ax_ev, title in zip(['low', 'high'], [ax_ev_low, ax_ev_high],
                                         ['Low Var Explained Variance', 'High Var Explained Variance']):
-            pc1_vals = pca_ev[m_type][:, :, 0]
-            pc2_vals = pca_ev[m_type][:, :, 1]
-            cum_vals = np.sum(pca_ev[m_type][:, :, :2], axis=2)
+            if num_frames > 0:
+                pc1_vals = pca_ev[m_type][:, :, 0]
+                pc2_vals = pca_ev[m_type][:, :, 1]
+                cum_vals = np.sum(pca_ev[m_type][:, :, :2], axis=2)
 
-            for r_idx in range(n_runs):
-                ax_ev.plot(cum_vals[r_idx, :], color='purple', alpha=0.15, linestyle=':')
+                for r_idx in range(n_runs):
+                    ax_ev.plot(x_vals, cum_vals[r_idx, :], color='purple', alpha=0.15, linestyle=':')
 
-            ax_ev.plot(pc1_vals.mean(axis=0), color='blue', label='PC1', linewidth=1.5)
-            ax_ev.plot(pc2_vals.mean(axis=0), color='orange', label='PC2', linewidth=1.5)
-            ax_ev.plot(cum_vals.mean(axis=0), color='purple', label='PC1 + PC2', linewidth=2.5)
+                ax_ev.plot(x_vals, pc1_vals.mean(axis=0), color='blue', label='PC1', linewidth=1.5)
+                ax_ev.plot(x_vals, pc2_vals.mean(axis=0), color='orange', label='PC2', linewidth=1.5)
+                ax_ev.plot(x_vals, cum_vals.mean(axis=0), color='purple', label='PC1 + PC2', linewidth=2.5)
 
-            vlines[m_type] = ax_ev.axvline(0, color='black', linestyle='--', linewidth=2)
+                vlines[m_type] = ax_ev.axvline(x_vals[0], color='black', linestyle='--', linewidth=2)
 
             ax_ev.set_title(title, fontsize=10, fontweight='bold')
             ax_ev.set_ylim(-0.05, 1.05)
-            ax_ev.set_xlim(0, total_epochs)
             ax_ev.grid(True, linestyle=':', alpha=0.6)
 
         ax_ev_high.legend(loc='lower left', bbox_to_anchor=(1.02, 0.0), fontsize=8)
 
         titles = ['Low Variance (RichMLP)', 'High Variance (LazyMLP)']
 
+        scatters = {'low': [], 'high': []}
+        ax_titles = {}
+
+        for idx, (ax, m_type) in enumerate(zip([ax_low, ax_high], ['low', 'high'])):
+            ax.grid(True, linestyle='--', alpha=0.5)
+            run_scats = []
+            for r_idx in range(n_runs):
+                lbl_scats = {}
+                for lbl in unique_labels:
+                    mask = np.array([s == lbl for s in f_strs])
+                    coords = pca_coords[m_type][r_idx, 0][mask]
+                    scat = ax.scatter(coords[:, 0], coords[:, 1], color='white', s=100, alpha=0.6, edgecolors='none')
+                    lbl_scats[lbl] = (scat, mask)
+                run_scats.append(lbl_scats)
+            scatters[m_type] = run_scats
+            ax_titles[m_type] = ax.set_title("", fontweight='bold', fontsize=13)
+
         def update(frame_idx):
-            epoch = epochs[frame_idx]
+            b_idx, rel_ep, abs_ep, t_block, epoch_val = target_info[frame_idx]
 
-            rel_ep, cur_ep, b_idx, t_block = 0, 0, 0, None
-            for b_name, b_res in self.runs[0]:
-                n_eps = len(b_res["data_low"]["activations"])
-                if epoch == -1 or cur_ep <= epoch < cur_ep + n_eps:
-                    t_block, rel_ep = b_name, (n_eps - 1) if epoch == -1 else (epoch - cur_ep)
-                    break
-                cur_ep += n_eps;
-                b_idx += 1
+            if use_binary_colors:
+                env_X_test = self.runs[0][b_idx][1]["data_low"]["test_envs"][t_block]["X"]
+                env_y_test = self.runs[0][b_idx][1]["data_low"]["test_envs"][t_block]["y"]
 
-            target_ep_idx = cur_ep + rel_ep if epoch != -1 else total_epochs - 1
+                y_global = np.zeros(len(env_X))
+                if len(env_X) == len(env_y_test):
+                    y_global = env_y_test[:, 0]
+                else:
+                    for i, x_val in enumerate(env_X):
+                        dist = np.sum(np.abs(env_X_test - x_val), axis=1)
+                        match_idx = np.argmin(dist)
+                        y_global[i] = env_y_test[match_idx, 0]
+
+                colors_for_frame = ['#1f77b4' if y > 0.5 else '#d62728' for y in y_global]
+
+                legend_elements = [
+                    Line2D([0], [0], marker='o', color='black', label='Class 0 (Avg)' if self.is_multi else 'Class 0',
+                           markerfacecolor='#d62728', markersize=10, linestyle='None', markeredgewidth=1.5),
+                    Line2D([0], [0], marker='o', color='black', label='Class 1 (Avg)' if self.is_multi else 'Class 1',
+                           markerfacecolor='#1f77b4', markersize=10, linestyle='None', markeredgewidth=1.5)
+                ]
+            else:
+                distinct_rgbs = get_distinct_colors(len(unique_labels))
+                color_map = {lbl: distinct_rgbs[i] for i, lbl in enumerate(unique_labels)}
+                colors_for_frame = [color_map[f_strs[i]] for i in range(len(env_X))]
+
+                legend_elements = [
+                    Line2D([0], [0], marker='o', color='black', label=f'{lbl} (Avg)' if self.is_multi else lbl,
+                           markerfacecolor=color_map[lbl], markersize=10, linestyle='None', markeredgewidth=1.5)
+                    for lbl in unique_labels
+                ]
 
             for idx, (ax, m_type) in enumerate(zip([ax_low, ax_high], ['low', 'high'])):
                 ax.clear()
+
                 if t_block is None:
-                    ax.text(0.5, 0.5, f"Epoch {epoch}\nNot Found", ha='center', va='center', color='red', fontsize=12)
+                    ax.text(0.5, 0.5, f"Epoch {epoch_val}\nNot Found", ha='center', va='center', color='red',
+                            fontsize=12)
                     ax.axis('off')
                     continue
 
-                for r_idx in range(n_runs):
-                    coords = pca_coords[m_type][r_idx, target_ep_idx]
-                    for lbl in unique_labels:
-                        mask = [s == lbl for s in f_strs]
-                        ax.scatter(coords[mask, 0], coords[mask, 1], color=color_map[lbl], s=100, alpha=0.6,
-                                   edgecolors='none')
+                all_x, all_y = [], []
 
-                ax.margins(0.15);
+                if self.is_multi:
+                    for r_idx in range(n_runs):
+                        coords = pca_coords[m_type][r_idx, frame_idx]
+                        all_x.extend(coords[:, 0])
+                        all_y.extend(coords[:, 1])
+                        ax.scatter(coords[:, 0], coords[:, 1], c=colors_for_frame, s=15, alpha=0.2, edgecolors='none')
+
+                    mean_coords = np.mean(pca_coords[m_type][:, frame_idx, :, :], axis=0)
+                    ax.scatter(mean_coords[:, 0], mean_coords[:, 1], c=colors_for_frame, s=150, alpha=1.0,
+                               edgecolors='black', linewidths=1.5, zorder=5)
+                else:
+                    coords = pca_coords[m_type][0, frame_idx]
+                    all_x.extend(coords[:, 0])
+                    all_y.extend(coords[:, 1])
+                    ax.scatter(coords[:, 0], coords[:, 1], c=colors_for_frame, s=100, alpha=0.6, edgecolors='none')
+
+                if all_x and all_y:
+                    min_x, max_x = min(all_x), max(all_x)
+                    min_y, max_y = min(all_y), max(all_y)
+                    margin_x = (max_x - min_x) * 0.15 if max_x != min_x else 0.1
+                    margin_y = (max_y - min_y) * 0.15 if max_y != min_y else 0.1
+                    ax.set_xlim(min_x - margin_x, max_x + margin_x)
+                    ax.set_ylim(min_y - margin_y, max_y + margin_y)
+
+                ax.margins(0.15)
                 ax.grid(True, linestyle='--', alpha=0.5)
-                ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch == -1 else epoch} | Block: {t_block}",
+                ax.set_title(f"{titles[idx]}\nEpoch: {'Last' if epoch_val == -1 else epoch_val} | Block: {t_block}",
                              fontweight='bold', fontsize=13)
+                vlines[m_type].set_xdata([abs_ep, abs_ep])
 
-                vlines[m_type].set_xdata([target_ep_idx, target_ep_idx])
-
-            ax_high.legend(handles=legend_elements, loc='lower left', bbox_to_anchor=(1.02, 0.0), title="Features")
+            ax_high.legend(handles=legend_elements, loc='lower left', bbox_to_anchor=(1.02, 0.0),
+                           title="Classes" if use_binary_colors else "Features", fontsize=8)
 
         title_suffix = f" ({len(self.runs)} Runs)" if self.is_multi else ""
         fig.suptitle(f"PCA Evolution of '{layer_name}' Activations in {self.exp_name.capitalize()}{title_suffix}",
