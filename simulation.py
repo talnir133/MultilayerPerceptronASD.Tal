@@ -175,21 +175,24 @@ def create_tracker(test_envs, X_global):
         "test_envs": {env: {"X": data["X"].cpu().numpy(), "y": data["y"].cpu().numpy()} for env, data in
                       test_envs.items()},
         "activations": [],
-        "activation_distances": []
+        "activation_distances": [],
+        "PR_weights": []
     }
     metrics = [
         "losses_clean", "MAE_clean", "accuracy_clean",
         "losses_noisy", "MAE_noisy", "accuracy_noisy",
-        "losses_noisy_optimal", "MAE_noisy_optimal", "accuracy_noisy_optimal"
+        "losses_noisy_optimal", "MAE_noisy_optimal", "accuracy_noisy_optimal", "PR_activations"
     ]
     for m in metrics:
         tracker[m] = {env: [] for env in test_envs.keys()}
     return tracker
 
-def get_metric_callback(tracker, cfg, test_envs, X_global):
+def get_metric_callback(tracker, cfg, test_envs, X_global, target_layer="fc1"):
     sd = cfg.get("sd", 0)
 
     def callback(current_model, loss_criterion):
+
+        # Collection of raw parameters
         for name, param in current_model.named_parameters():
             if 'weight' in name:
                 if name not in tracker["weights"]:
@@ -200,6 +203,18 @@ def get_metric_callback(tracker, cfg, test_envs, X_global):
                     tracker["biases"][name] = []
                 tracker["biases"][name].append(param.detach().cpu().numpy().copy())
 
+        # PR Weights Calculation
+        for name, layer in current_model._layers.named_children():
+            if name == target_layer:
+                w_np = layer.weight.detach().cpu().numpy()
+                num = np.sum(w_np ** 2, axis=1) ** 2
+                den = np.sum(w_np ** 4, axis=1)
+
+                N_weights = w_np.shape[1]
+                pr_w_raw = np.mean(np.divide(num, den, out=np.zeros_like(num), where=den != 0))
+                tracker["PR_weights"].append(pr_w_raw / N_weights)
+
+        # Collection of global activations
         acts = get_network_activations(current_model, X_global)
         epoch_act_dist = {}
         for name, act_np in acts.items():
@@ -207,9 +222,18 @@ def get_metric_callback(tracker, cfg, test_envs, X_global):
         tracker["activations"].append(acts)
         tracker["activation_distances"].append(epoch_act_dist)
 
+        # 2. Environment specific metrics
         for env_name, env_data in test_envs.items():
             X_env = env_data["X"]
             y_env = env_data["y"]
+
+            # Calculate PR for Activations (using X_env)
+            env_acts = get_network_activations(current_model, X_env)[target_layer]
+            num_a = np.sum(env_acts ** 2, axis=1) ** 2
+            den_a = np.sum(env_acts ** 4, axis=1)
+            N_neurons = env_acts.shape[1]
+            pr_a_raw = np.mean(np.divide(num_a, den_a, out=np.zeros_like(num_a), where=den_a != 0))
+            tracker["PR_activations"][env_name].append(pr_a_raw / N_neurons)
 
             clean_preds = current_model(X_env)[:, 0:1]
             clean_probs = torch.sigmoid(clean_preds)
