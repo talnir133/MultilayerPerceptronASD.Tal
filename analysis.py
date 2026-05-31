@@ -8,6 +8,9 @@ from matplotlib.lines import Line2D
 import matplotlib.gridspec as gridspec
 from sklearn.decomposition import PCA
 import colorsys
+from matplotlib import animation
+from IPython.display import display, HTML
+import matplotlib as mpl
 
 warnings.filterwarnings("ignore")
 
@@ -23,7 +26,7 @@ def get_distinct_colors(n):
     return colors
 
 
-def align_coords_no_reflection(coords, ref_coords):
+def align_coords(coords, ref_coords):
     if coords.shape[0] == 0: return coords
     mean_c = coords.mean(axis=0)
     mean_ref = ref_coords.mean(axis=0)
@@ -32,9 +35,7 @@ def align_coords_no_reflection(coords, ref_coords):
     try:
         U, S, Vt = np.linalg.svd(c_c.T @ ref_c)
         R = U @ Vt
-        if np.linalg.det(R) < 0:
-            Vt[-1, :] *= -1
-            R = U @ Vt
+
         return c_c @ R + mean_ref
     except Exception:
         return coords
@@ -106,6 +107,7 @@ class SimulationAnalyzer:
         ax.text(0.0, 1.0, txt.strip(), transform=ax.transAxes, fontsize=8, va='top', ha='left',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
 
+
     def plot_metric_over_epochs(self, metric_name, envs="current_only", show_std=False, show_config=True):
         is_global_metric = isinstance(self.runs[0][0][1]["data_low"].get(metric_name), list)
 
@@ -154,8 +156,8 @@ class SimulationAnalyzer:
             mean_high = np.mean(all_runs_high, axis=0)
             x_range = np.arange(len(mean_low))
 
-            ax.plot(x_range, mean_low, color='blue', linewidth=2, linestyle='-', label="Low Var")
-            ax.plot(x_range, mean_high, color='red', linewidth=2, linestyle='-', label="High Var")
+            ax.plot(x_range, mean_low, color='blue', linewidth=2, linestyle='-', label="Low Variance (RichMLP)")
+            ax.plot(x_range, mean_high, color='red', linewidth=2, linestyle='-', label="High Variance (LazyMLP)")
 
             if show_std and self.is_multi:
                 std_low = np.std(all_runs_low, axis=0)
@@ -281,17 +283,41 @@ class SimulationAnalyzer:
             ax.text((bounds[i] + bounds[i + 1]) / 2, -0.06, blocks[i], transform=ax.get_xaxis_transform(), ha='center',
                     va='top', fontsize=8, fontweight='bold', color='darkblue')
 
-        parts = metric_name.split('_')
-        y_label = " ".join([p if p.isupper() else p.capitalize() for p in parts])
+        has_any_noise = any(b.get("sd", 0.0) > 0 for b in self.config.get("exp_blocks", []))
+
+        if not has_any_noise:
+            clean_metric_name = metric_name.replace('_noisy', '').replace('_clean', '')
+        else:
+            clean_metric_name = metric_name
+        parts = clean_metric_name.split('_')
+        y_label = " ".join([p.upper() if p.lower() in ['mae', 'pr'] else p.capitalize() for p in parts])
+        subtitle = ""
+
         if "PR" in metric_name:
-            y_label = "Participation Ratio"
+            if "weights" in metric_name:
+                y_label = "Normalized Weights' PR"
+                subtitle = "Mean PR over all incoming weight vectors of the different neurons"
+            else:
+                y_label = "Normalized Activations' PR"
+                subtitle = "Mean PR over all activation vectors of the data samples of current block"
+            ax.set_ylim(-0.05, 1.05)
+
+        elif "correlation" in metric_name.lower():
+            y_label = "Pearson Correlation (r)"
+            subtitle = "Correlation between incoming weights' L2 norm and absolute bias magnitude"
+            ax.set_ylim(-1.05, 1.05)
 
         ax.set(xlabel='Epochs', ylabel=y_label)
         ax.xaxis.labelpad = 20
         ax.grid(True, which="both", ls="-", alpha=0.5)
 
         title_suffix = f" ({len(self.runs)} Runs Averaged)" if self.is_multi else ""
-        ax.set_title(f"{y_label}{title_suffix}", fontweight='bold', fontsize=14, pad=25)
+
+        ax.set_title(f"{y_label}{title_suffix}", fontweight='bold', fontsize=15, pad=30)
+
+        if subtitle:
+            ax.text(0.5, 1.015, subtitle, transform=ax.transAxes, ha='center', va='bottom',
+                    fontsize=11, color='#555555', style='italic')
 
         ax.legend(loc='lower left', bbox_to_anchor=(1.02, 0.0), frameon=True, edgecolor='gray')
 
@@ -304,39 +330,48 @@ class SimulationAnalyzer:
         plt.show()
 
     def plot_parameter_distributions(self, layer_name="fc1", param_type="weight", color_mode=None, bins=50,
-                                     clip_percentile=5, show_config=True):
-        from matplotlib import animation
-        from IPython.display import display, HTML
+                                     clip_percentile=2, show_config=True):
+        mpl.rcParams['animation.embed_limit'] = 100.0
 
         param_type = param_type.lower()
         if "weight" in param_type:
             actual_param = "weight"
-            group = "weights"
             if color_mode is None:
                 color_mode = "mean_bias"
         elif "bias" in param_type:
             actual_param = "bias"
-            group = "biases"
             if color_mode is None:
                 color_mode = "weight_norm"
         else:
             print("Error: param_type must be either 'weight' or 'bias'")
             return
 
-        if color_mode == "input_features" and layer_name != "fc1":
-            print(f"Notice: 'input_features' color_mode is only valid for 'fc1'. Reverting to 'mean_bias'.")
-            color_mode = "mean_bias"
-
         w_key = f"_layers.{layer_name}.weight"
         b_key = f"_layers.{layer_name}.bias"
+
+        first_b_res = self.runs[0][0][1]
+        if w_key not in first_b_res["data_low"]["weights"]:
+            print(f"Warning: Weight key '{w_key}' not found for layer '{layer_name}'.")
+            return
+
+        has_bias = b_key in first_b_res["data_low"]["biases"]
+        if actual_param == "bias" and not has_bias:
+            print(f"Warning: Layer '{layer_name}' does not have biases to plot.")
+            return
+
+        if not has_bias and color_mode in ["mean_bias", "mean_abs_bias"]:
+            color_mode = "input_features" if layer_name == "fc1" else "weight_norm"
+
+        if color_mode == "input_features" and layer_name != "fc1":
+            print(f"Notice: 'input_features' color_mode is only valid for 'fc1'. Reverting to 'weight_norm'.")
+            color_mode = "weight_norm"
 
         low_X, high_X = [], []
         low_C, high_C = [], []
         epoch_labels = []
 
-        for b_name, _ in self.runs[0]:
-            n_eps = len(self.runs[0][0][1]["data_low"]["losses_clean"][
-                            list(self.runs[0][0][1]["data_low"]["losses_clean"].keys())[0]])
+        for b_name, b_res in self.runs[0]:
+            n_eps = len(b_res["data_low"]["losses_clean"][list(b_res["data_low"]["losses_clean"].keys())[0]])
             for ep in range(n_eps):
                 epoch_labels.append(f"Block: {b_name} | Epoch: {ep}")
 
@@ -355,14 +390,11 @@ class SimulationAnalyzer:
             for run_res in self.runs:
                 b_res = run_res[b_idx][1]
 
-                if w_key not in b_res["data_low"]["weights"] or b_key not in b_res["data_low"]["biases"]:
-                    print(f"Warning: Keys for '{layer_name}' not found.")
-                    return
-
                 w_l = b_res["data_low"]["weights"][w_key][cur_ep]
-                b_l = b_res["data_low"]["biases"][b_key][cur_ep]
                 w_h = b_res["data_high"]["weights"][w_key][cur_ep]
-                b_h = b_res["data_high"]["biases"][b_key][cur_ep]
+
+                b_l = b_res["data_low"]["biases"][b_key][cur_ep] if has_bias else np.zeros(w_l.shape[0])
+                b_h = b_res["data_high"]["biases"][b_key][cur_ep] if has_bias else np.zeros(w_h.shape[0])
 
                 if actual_param == "weight":
                     l_x_ep.append(w_l.flatten())
@@ -376,7 +408,7 @@ class SimulationAnalyzer:
                             s_idx += dim
                         l_c_ep.append(F.flatten())
                         h_c_ep.append(F.flatten())
-                    else:
+                    elif color_mode in ["mean_bias", "mean_abs_bias"]:
                         b_l_exp = np.repeat(b_l[:, None], w_l.shape[1], axis=1).flatten()
                         b_h_exp = np.repeat(b_h[:, None], w_h.shape[1], axis=1).flatten()
                         if color_mode == "mean_abs_bias":
@@ -385,6 +417,9 @@ class SimulationAnalyzer:
                         else:
                             l_c_ep.append(b_l_exp)
                             h_c_ep.append(b_h_exp)
+                    else:  # weight_norm fallback
+                        l_c_ep.append(np.linalg.norm(w_l, axis=1).flatten())
+                        h_c_ep.append(np.linalg.norm(w_h, axis=1).flatten())
                 else:
                     l_x_ep.append(b_l.flatten())
                     h_x_ep.append(b_h.flatten())
@@ -463,7 +498,10 @@ class SimulationAnalyzer:
         fig.subplots_adjust(left=left_margin, right=right_margin, top=0.85, bottom=0.20, wspace=wspace)
 
         if is_continuous:
-            plot_width = (right_margin - left_margin - wspace) / 2
+            total_width = right_margin - left_margin
+
+            plot_width = total_width / (2.0 + wspace)
+            actual_wspace = plot_width * wspace
 
             sm_low = plt.cm.ScalarMappable(cmap=cmap, norm=norm_low)
             sm_low.set_array([])
@@ -473,7 +511,8 @@ class SimulationAnalyzer:
 
             sm_high = plt.cm.ScalarMappable(cmap=cmap, norm=norm_high)
             sm_high.set_array([])
-            cbar_ax_high = fig.add_axes([left_margin + plot_width + wspace, 0.06, plot_width, 0.03])
+
+            cbar_ax_high = fig.add_axes([left_margin + plot_width + actual_wspace, 0.06, plot_width, 0.03])
             cbar_high = fig.colorbar(sm_high, cax=cbar_ax_high, orientation='horizontal')
             cbar_high.set_label(f"{cbar_label} (High Var)", fontweight='bold')
         else:
@@ -529,6 +568,7 @@ class SimulationAnalyzer:
         anim = animation.FuncAnimation(fig, update, frames=len(low_X), interval=200, repeat=False)
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
+
 
     def plot_PCs(self, epochs=(-1,), layer_name='fc1', show_config=True):
         if isinstance(epochs, int): epochs = (epochs,)
@@ -598,17 +638,17 @@ class SimulationAnalyzer:
         if num_frames > 0:
             pca_coords['low'][0, 0] = raw_coords['low'][0, 0]
             for k in range(1, num_frames):
-                pca_coords['low'][0, k] = align_coords_no_reflection(raw_coords['low'][0, k],
+                pca_coords['low'][0, k] = align_coords(raw_coords['low'][0, k],
                                                                      pca_coords['low'][0, k - 1])
 
             for k in range(num_frames):
-                pca_coords['high'][0, k] = align_coords_no_reflection(raw_coords['high'][0, k], pca_coords['low'][0, k])
+                pca_coords['high'][0, k] = align_coords(raw_coords['high'][0, k], pca_coords['low'][0, k])
 
             for r_idx in range(1, n_runs):
                 for k in range(num_frames):
-                    pca_coords['low'][r_idx, k] = align_coords_no_reflection(raw_coords['low'][r_idx, k],
+                    pca_coords['low'][r_idx, k] = align_coords(raw_coords['low'][r_idx, k],
                                                                              pca_coords['low'][0, k])
-                    pca_coords['high'][r_idx, k] = align_coords_no_reflection(raw_coords['high'][r_idx, k],
+                    pca_coords['high'][r_idx, k] = align_coords(raw_coords['high'][r_idx, k],
                                                                               pca_coords['high'][0, k])
 
         from matplotlib import animation
@@ -737,12 +777,14 @@ class SimulationAnalyzer:
                     ax.scatter(coords[:, 0], coords[:, 1], c=colors_for_frame, s=100, alpha=0.6, edgecolors='none')
 
                 if all_x and all_y:
-                    min_x, max_x = min(all_x), max(all_x)
-                    min_y, max_y = min(all_y), max(all_y)
-                    margin_x = (max_x - min_x) * 0.15 if max_x != min_x else 0.1
-                    margin_y = (max_y - min_y) * 0.15 if max_y != min_y else 0.1
-                    ax.set_xlim(min_x - margin_x, max_x + margin_x)
-                    ax.set_ylim(min_y - margin_y, max_y + margin_y)
+                    min_val = min(min(all_x), min(all_y))
+                    max_val = max(max(all_x), max(all_y))
+                    margin = (max_val - min_val) * 0.15 if max_val != min_val else 0.1
+                    lim_min = min_val - margin
+                    lim_max = max_val + margin
+                    ax.set_xlim(lim_min, lim_max)
+                    ax.set_ylim(lim_min, lim_max)
+                    ax.set_aspect('equal', 'box')
 
                 ax.margins(0.15)
                 ax.grid(True, linestyle='--', alpha=0.5)
@@ -760,91 +802,3 @@ class SimulationAnalyzer:
         anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=200, repeat=False)
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
-
-    def plot_parameter_correlation(self, layer_name="fc1", show_std=False, show_config=True):
-        w_key = f"_layers.{layer_name}.weight"
-        b_key = f"_layers.{layer_name}.bias"
-
-        if w_key not in self.runs[0][0][1]["data_low"]["weights"]:
-            raise KeyError(f"Layer '{layer_name}' not found in tracked weights.")
-
-        fig, ax = plt.subplots(figsize=(15, 8))
-        plt.subplots_adjust(right=0.74 if show_config else 0.85, top=0.88, bottom=0.15)
-
-        bounds = [0]
-        blocks = []
-        for name, res in self.runs[0]:
-            n_eps = len(res["data_low"]["weights"][w_key])
-            bounds.append(bounds[-1] + n_eps)
-            blocks.append(name)
-
-        all_runs_low = []
-        all_runs_high = []
-
-        for run_res in self.runs:
-            run_low = []
-            run_high = []
-            for b_name, b_res in run_res:
-                w_l = b_res["data_low"]["weights"][w_key]
-                b_l = b_res["data_low"]["biases"][b_key]
-                w_h = b_res["data_high"]["weights"][w_key]
-                b_h = b_res["data_high"]["biases"][b_key]
-
-                for ep in range(len(w_l)):
-                    w_norm_l = np.linalg.norm(w_l[ep], axis=1)
-                    abs_b_l = np.abs(b_l[ep].flatten())
-                    if np.std(w_norm_l) == 0 or np.std(abs_b_l) == 0:
-                        corr_l = 0.0
-                    else:
-                        corr_l = np.corrcoef(w_norm_l, abs_b_l)[0, 1]
-                    run_low.append(corr_l)
-
-                    w_norm_h = np.linalg.norm(w_h[ep], axis=1)
-                    abs_b_h = np.abs(b_h[ep].flatten())
-                    if np.std(w_norm_h) == 0 or np.std(abs_b_h) == 0:
-                        corr_h = 0.0
-                    else:
-                        corr_h = np.corrcoef(w_norm_h, abs_b_h)[0, 1]
-                    run_high.append(corr_h)
-
-            all_runs_low.append(run_low)
-            all_runs_high.append(run_high)
-
-        mean_low = np.mean(all_runs_low, axis=0)
-        mean_high = np.mean(all_runs_high, axis=0)
-        x_range = np.arange(len(mean_low))
-
-        ax.plot(x_range, mean_low, color='blue', linewidth=2, linestyle='-', label="Low Variance (RichMLP)")
-        ax.plot(x_range, mean_high, color='red', linewidth=2, linestyle='-', label="High Variance (LazyMLP)")
-
-        if show_std and self.is_multi:
-            std_low = np.std(all_runs_low, axis=0)
-            std_high = np.std(all_runs_high, axis=0)
-            ax.fill_between(x_range, mean_low - std_low, mean_low + std_low, color='blue', alpha=0.15)
-            ax.fill_between(x_range, mean_high - std_high, mean_high + std_high, color='red', alpha=0.15)
-
-        for i in range(1, len(bounds) - 1):
-            ax.axvline(x=bounds[i], color='gray', linestyle='--', linewidth=1, alpha=0.7)
-
-        for i in range(len(blocks)):
-            ax.text((bounds[i] + bounds[i + 1]) / 2, -0.06, blocks[i], transform=ax.get_xaxis_transform(), ha='center',
-                    va='top', fontsize=8, fontweight='bold', color='darkblue')
-
-        ax.set(xlabel='Epochs', ylabel='Pearson Correlation (r)')
-        ax.xaxis.labelpad = 20
-        ax.set_ylim(-1.05, 1.05)
-        ax.grid(True, which="both", ls="-", alpha=0.5)
-
-        title_suffix = f" ({len(self.runs)} Runs Averaged)" if self.is_multi else ""
-        ax.set_title(f"Bias & Incoming Weights L2 Norm Correlation{title_suffix}", fontweight='bold', fontsize=14,
-                     pad=25)
-
-        ax.legend(loc='lower left', bbox_to_anchor=(1.02, 0.0), frameon=True, edgecolor='gray')
-
-        if show_config:
-            cfg_ax = fig.add_axes([0.76, 0.15, 0.22, 0.73])
-            cfg_ax.axis('off')
-            self._add_config_info(cfg_ax, show_config=show_config)
-
-        self._save_fig(f"correlation_bias_weights_{layer_name}_figure_{self.exp_name.replace(' ', '_')}")
-        plt.show()
