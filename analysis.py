@@ -11,7 +11,6 @@ import colorsys
 from matplotlib import animation
 from IPython.display import display, HTML
 import matplotlib as mpl
-
 warnings.filterwarnings("ignore")
 
 

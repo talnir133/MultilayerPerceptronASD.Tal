@@ -112,7 +112,8 @@ class Simulation:
                     "X": X_test,
                     "y": y_test[:, 0:1],
                     "mask": mask,
-                    "rule_func": rule_func
+                    "rule_func": rule_func,
+                    "sd": b_cfg["sd"]
                 }
         return test_envs
 
@@ -141,7 +142,6 @@ class Simulation:
         block_config.setdefault("sd", 0.0)
         opt_map = {"Adam": optim.Adam, "SGD": optim.SGD}
         block_config["optimizer_type"] = opt_map[block_config["optimizer_type"]]
-
         act_map = {
             "Tanh": nn.Tanh, "RelU": nn.ReLU,
             "Sigmoid": nn.Sigmoid, "Identity": nn.Identity
@@ -192,7 +192,6 @@ def create_tracker(test_envs, X_global):
 
 
 def get_metric_callback(tracker, cfg, test_envs, X_global, target_layer="fc1"):
-    sd = cfg.get("sd", 0)
 
     def callback(current_model, loss_criterion):
 
@@ -250,6 +249,7 @@ def get_metric_callback(tracker, cfg, test_envs, X_global, target_layer="fc1"):
         for env_name, env_data in test_envs.items():
             X_env = env_data["X"]
             y_env = env_data["y"]
+            env_sd = env_data["sd"]
 
             # Calculate PR for Activations (Normalized)
             env_acts = get_network_activations(current_model, X_env)[target_layer]
@@ -267,11 +267,11 @@ def get_metric_callback(tracker, cfg, test_envs, X_global, target_layer="fc1"):
             tracker["accuracy_clean"][env_name].append(
                 ((clean_probs > 0.5) == y_env.bool()).float().mean().item())
 
-            # Noisy Predictions (If applicable)
-            if sd > 0:
-                X_noisy_env = X_env + (torch.randn_like(X_env) * sd * env_data["mask"])
+            # Noisy Predictions (If applicable for specific environment)
+            if env_sd > 0:
+                X_noisy_env = X_env + (torch.randn_like(X_env) * env_sd * env_data["mask"])
                 noisy_preds = current_model(X_noisy_env)[:, 0:1]
-                opt_probs = get_bayes_optimal_probabilities(X_noisy_env, sd, X_env, y_env)
+                opt_probs = get_bayes_optimal_probabilities(X_noisy_env, env_sd, X_env, y_env)
                 model_probs = torch.sigmoid(noisy_preds)
 
                 tracker["losses_noisy"][env_name].append(loss_criterion(noisy_preds, y_env).item())
