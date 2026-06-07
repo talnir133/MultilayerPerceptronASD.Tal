@@ -71,7 +71,7 @@ class Simulation:
             models["low"], optimizers["low"], X, rule_to_apply,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_low, cfg, test_envs, X_global_dev) if self.track_metrics else lambda m, x, c: None
+            metric_callback=get_metric_callback(data_low, cfg, test_envs, X_global_dev) if self.track_metrics else lambda m, c: None
         )
 
         # ==========================================
@@ -88,7 +88,7 @@ class Simulation:
             models["high"], optimizers["high"], X, rule_to_apply,
             cfg["epochs"], cfg["batch_size"], cfg["sd"], noise_mask,
             cfg["alpha_class"], cfg["alpha_rec"],
-            metric_callback=get_metric_callback(data_high, cfg, test_envs, X_global_dev) if self.track_metrics else lambda m, x, c: None
+            metric_callback=get_metric_callback(data_high, cfg, test_envs, X_global_dev) if self.track_metrics else lambda m, c: None
         )
 
         return {
@@ -170,6 +170,9 @@ def get_noise_mask(block_config, X):
 
 def create_tracker(test_envs, X_global):
     tracker = {
+        # ==========================================
+        # Global Data and Metrics
+        # ==========================================
         "weights": {},
         "biases": {},
         "X_global": X_global.cpu().numpy(),
@@ -178,8 +181,17 @@ def create_tracker(test_envs, X_global):
         "activations": [],
         "activation_distances": [],
         "PR_weights": [],
-        "bias_weight_correlation": []
+        "bias_weight_correlation": [],
+
+        # DR measurements:
+        "data_entropy": [],
+        "center_entropy": [],
+        "data_rec_acc": [],
+        "center_rec_acc": []
     }
+    # ==========================================
+    # Environment Specific Metrics
+    # ==========================================
     metrics = [
         "losses_clean", "MAE_clean", "accuracy_clean",
         "losses_noisy", "MAE_noisy", "accuracy_noisy",
@@ -196,8 +208,10 @@ def get_metric_callback(tracker, cfg, test_envs, X_global, target_layer="fc1"):
     def callback(current_model, loss_criterion):
 
         # ==========================================
-        # 1. Collection of Raw Parameters
+        # Global Data and Metrics
         # ==========================================
+
+        #   1. Global Raw parameters:
         for name, param in current_model.named_parameters():
             if 'weight' in name:
                 if name not in tracker["weights"]:
@@ -208,9 +222,7 @@ def get_metric_callback(tracker, cfg, test_envs, X_global, target_layer="fc1"):
                     tracker["biases"][name] = []
                 tracker["biases"][name].append(param.detach().cpu().numpy().copy())
 
-        # ==========================================
-        # 2. Collection of Global Activations
-        # ==========================================
+        #   2. Global Activations:
         acts = get_network_activations(current_model, X_global)
         epoch_act_dist = {}
         for name, act_np in acts.items():
@@ -218,9 +230,7 @@ def get_metric_callback(tracker, cfg, test_envs, X_global, target_layer="fc1"):
         tracker["activations"].append(acts)
         tracker["activation_distances"].append(epoch_act_dist)
 
-        # ==========================================
-        # 3. Global Structural Metrics Calculation
-        # ==========================================
+        #   3. Global Metrics:
         for name, layer in current_model._layers.named_children():
             if name == target_layer:
                 w_np = layer.weight.detach().cpu().numpy()
@@ -243,8 +253,39 @@ def get_metric_callback(tracker, cfg, test_envs, X_global, target_layer="fc1"):
                 tracker["bias_weight_correlation"].append(corr)
                 break
 
+        #   4. DR measurement:
+        fixed_sd = 0.1
+        noise_samples_per_point = 20
+
+        def calc_rec_metrics(base_pts, sd, n, is_center=False):
+            expanded_pts = base_pts.repeat(n, 1)
+            raw_noise = torch.randn_like(expanded_pts) * sd
+
+            if is_center:
+                noisy = expanded_pts + raw_noise
+            else:
+                noise_mag = torch.abs(raw_noise)
+                noisy = torch.where(expanded_pts == 0, expanded_pts + noise_mag, expanded_pts - noise_mag)
+
+            noisy = torch.clamp(noisy, 0.0, 1.0)
+            p = torch.sigmoid(current_model(noisy)[:, 1:])
+            p_c = torch.clamp(p, 1e-7, 1.0 - 1e-7)
+            ent = (-p_c * torch.log2(p_c) - (1.0 - p_c) * torch.log2(1.0 - p_c)).mean().item()
+
+            targets = X_global[torch.cdist(noisy, X_global).argmin(dim=1)]
+            acc = ((p > 0.5).float() == targets).float().mean().item()
+            return ent, acc
+
+        e_d, a_d = calc_rec_metrics(X_global, fixed_sd, noise_samples_per_point, is_center=False)
+        tracker["data_entropy"].append(e_d);
+        tracker["data_rec_acc"].append(a_d)
+
+        e_c, a_c = calc_rec_metrics(torch.full_like(X_global, 0.5), fixed_sd, noise_samples_per_point, is_center=True)
+        tracker["center_entropy"].append(e_c);
+        tracker["center_rec_acc"].append(a_c)
+
         # ==========================================
-        # 4. Environment Specific Metrics
+        # Environment Specific Metrics
         # ==========================================
         for env_name, env_data in test_envs.items():
             X_env = env_data["X"]

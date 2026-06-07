@@ -801,3 +801,109 @@ class SimulationAnalyzer:
         anim = animation.FuncAnimation(fig, update, frames=len(epochs), interval=200, repeat=False)
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
+
+    def plot_dr_tracker(self, plot_type="both", show_std=True, show_config=True):
+        from matplotlib.lines import Line2D
+        import matplotlib as mpl
+        if plot_type not in ["both", "data", "center"]: raise ValueError(
+            "plot_type must be 'both', 'data', or 'center'")
+
+        fig, (ax1, ax_mid, ax2) = plt.subplots(3, 1, figsize=(15, 11), gridspec_kw={'height_ratios': [2, 1, 1]})
+        fig.subplots_adjust(right=0.74 if show_config else 0.85, top=0.9, bottom=0.1, hspace=0.15)
+
+        bounds, blocks = [0], [name for name, _ in self.runs[0]]
+        for _, res in self.runs[0]: bounds.append(bounds[-1] + len(res["data_low"]["data_entropy"]))
+
+        all_runs = {k: [] for k in
+                    ["low_data", "low_center", "high_data", "high_center", "low_data_acc", "low_center_acc",
+                     "high_data_acc", "high_center_acc"]}
+        for run_res in self.runs:
+            rd = {k: [] for k in all_runs.keys()}
+            for _, b_res in run_res:
+                if plot_type in ["both", "data"]:
+                    rd["low_data"].extend(b_res["data_low"]["data_entropy"]);
+                    rd["high_data"].extend(b_res["data_high"]["data_entropy"])
+                    rd["low_data_acc"].extend(b_res["data_low"]["data_rec_acc"]);
+                    rd["high_data_acc"].extend(b_res["data_high"]["data_rec_acc"])
+                if plot_type in ["both", "center"]:
+                    rd["low_center"].extend(b_res["data_low"]["center_entropy"]);
+                    rd["high_center"].extend(b_res["data_high"]["center_entropy"])
+                    rd["low_center_acc"].extend(b_res["data_low"]["center_rec_acc"]);
+                    rd["high_center_acc"].extend(b_res["data_high"]["center_rec_acc"])
+            for k in rd:
+                if rd[k]: all_runs[k].append(rd[k])
+
+        x_range = np.arange(bounds[-1])
+        styles = {"low_data": ("#8B0000", "Low Var"), "high_data": ("#FF4500", "High Var"),
+                  "low_center": ("#00008B", "Low Var"), "high_center": ("#4169E1", "High Var")}
+
+        # חישוב Scale רק על בסיס ה-Data Entropy
+        ld_m = np.mean(all_runs["low_data"], axis=0) if all_runs["low_data"] else None
+        hd_m = np.mean(all_runs["high_data"], axis=0) if all_runs["high_data"] else None
+        scale_factor = np.sum(ld_m) / np.sum(hd_m) if (
+                    ld_m is not None and hd_m is not None and np.sum(hd_m) > 1e-6) else 1.0
+
+        handles_data, handles_center = [], []
+        for k, (c, lbl) in styles.items():
+            if not all_runs[k]: continue
+            m_val = np.mean(all_runs[k], axis=0)
+            s_val = np.std(all_runs[k], axis=0) if (show_std and self.is_multi) else None
+
+            line, = ax1.plot(x_range, m_val, color=c, linestyle="-", linewidth=2.5, label=lbl)
+            if "data" in k:
+                handles_data.append(line)
+            else:
+                handles_center.append(line)
+            if s_val is not None: ax1.fill_between(x_range, m_val - s_val, m_val + s_val, color=c, alpha=0.15)
+
+            x_mid = x_range * scale_factor if "high" in k else x_range
+            ax_mid.plot(x_mid, m_val, color=c, linestyle="-", linewidth=2.5)
+            if s_val is not None: ax_mid.fill_between(x_mid, m_val - s_val, m_val + s_val, color=c, alpha=0.15)
+
+            tk = k + "_acc"
+            if all_runs[tk]:
+                m_acc = np.mean(all_runs[tk], axis=0)
+                ax2.plot(x_range, m_acc, color=c, linestyle="-", linewidth=2.5)
+                if show_std and self.is_multi: ax2.fill_between(x_range, m_acc - np.std(all_runs[tk], axis=0),
+                                                                m_acc + np.std(all_runs[tk], axis=0), color=c,
+                                                                alpha=0.15)
+
+        for ax in [ax1, ax_mid, ax2]:
+            for i in range(1, len(bounds) - 1): ax.axvline(x=bounds[i], color='gray', linestyle='--', lw=1, alpha=0.7)
+            ax.grid(True, which="both", ls="-", alpha=0.4)
+            ax.set_xlim(x_range[0], x_range[-1])
+
+        ax1.set_ylim(-0.001, 1.05);
+        ax_mid.set_ylim(-0.001, 1.05);
+        ax2.set_ylim(0.5, 1.05)
+        ax_mid.set_xticks([])
+        for i, b in enumerate(blocks): ax2.text((bounds[i] + bounds[i + 1]) / 2, 0.55, b,
+                                                transform=ax2.get_xaxis_transform(), ha='center', va='bottom',
+                                                fontsize=10, fontweight='bold', color='darkslategray')
+
+        ax1.set_ylabel('Binary Entropy', fontsize=12);
+        ax_mid.set_ylabel('Binary Entropy', fontsize=12);
+        ax2.set_ylabel('Reconstruction Acc', fontsize=12);
+        ax2.set_xlabel('Epochs', fontsize=12)
+        ax_mid.text(0.5, 0.95, f"High Var X-Axis SCALED by {scale_factor:.3f}", transform=ax_mid.transAxes, ha='center',
+                    va='top', fontsize=10, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
+
+        fig.suptitle("DR Tracker", fontweight='bold', fontsize=18, y=0.96)
+        ax1.set_title("Tracking input reconstruction uncertainty via binary entropy and accuracy.", fontsize=12,
+                      color='#444444', pad=10)
+
+        final_handles = []
+        if handles_data: final_handles.extend(
+            [Line2D([], [], color='none', label=r'$\bf{Near\ Trained\ Data:}$')] + handles_data)
+        if handles_center: final_handles.extend(
+            [Line2D([], [], color='none', label=r'$\bf{Near\ Center:}$')] + handles_center)
+        ax1.legend(handles=final_handles, loc='lower left', bbox_to_anchor=(1.02, 0.0), frameon=True, edgecolor='gray',
+                   fontsize=10)
+
+        if show_config:
+            cfg_ax = fig.add_axes([0.76, 0.15, 0.22, 0.70])
+            cfg_ax.axis('off')
+            self._add_config_info(cfg_ax, show_config=show_config)
+        self._save_fig(f"DR_Tracker_{plot_type}_{self.exp_name.replace(' ', '_')}");
+        plt.show()

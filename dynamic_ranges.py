@@ -25,18 +25,18 @@ def _suppress_output():
 
 class IDR_check:
     def __init__(self, sd=0, activation_type="Identity", optimization_type="Adam",
-                 w_scale_low=0.1, w_scale_high=50, b_scale_low=0, b_scale_high=0, epochs=50, seed=0, n_hidden=1):
+                 w_scale_low=0.1, w_scale_high=50, b_scale_low=0, b_scale_high=0, epochs=50, seed=0, n_hidden=1, hidden_size=30, lr=0.04):
         self.sd, self.seed, self.epochs = sd, seed, epochs
         self.act_type, self.opt_type = activation_type, optimization_type
         self.w_l, self.w_h = w_scale_low, w_scale_high
         self.b_l, self.b_h = b_scale_low, b_scale_high
 
         self.config = {
-            "exp_name": "idr_check", "features_types": [2], "hidden_size": 30, "n_hidden": n_hidden,
+            "exp_name": "idr_check", "features_types": [2], "hidden_size": hidden_size, "n_hidden": n_hidden,
             "b_scale_low": self.b_l, "b_scale_high": self.b_h, "w_scale_low": self.w_l, "w_scale_high": self.w_h,
             "optimizer_type": self.opt_type, "activation_type": self.act_type, "batch_size": 1,
             "seed": self.seed,
-            "exp_blocks": [{"block_name": "M1", "sd": self.sd, "rule": "upper_half", "deciding_feature": 0,
+            "exp_blocks": [{"block_name": "M1", "sd": self.sd,"lr": lr, "rule": "upper_half", "deciding_feature": 0,
                             "zero_features": (), "epochs": self.epochs, "alpha_class": 1, "alpha_rec": 0}]
         }
 
@@ -84,48 +84,93 @@ class IDR_check:
 
         return results
 
-    def _save_fig(self, base_name):
-        file_path = os.path.join(self.save_dir, f"{base_name}.png")
-        counter = 1
-        while os.path.exists(file_path):
-            file_path = os.path.join(self.save_dir, f"{base_name}_{counter}.png")
-            counter += 1
-        plt.savefig(file_path, bbox_inches='tight', dpi=300)
-
-    def plot_sigmoids(self, seed=0):
+    def plot_sigmoids(self, num_simulations=1, start_seed=0):
+        from matplotlib.lines import Line2D
+        from scipy.stats import norm
         self._reset_data()
-        self.get_data(seed)
-        t_vals = self.t.flatten().numpy()
 
+        if num_simulations > 1:
+            with _suppress_output() as old_err:
+                for i in tqdm(range(num_simulations), file=old_err, desc="Running Simulations"): self.get_data(
+                    seed=start_seed + i)
+        else:
+            self.get_data(seed=start_seed)
+
+        t_vals = self.t.flatten().numpy()
         fig, ax = plt.subplots(figsize=(13, 6))
 
-        ax.plot(t_vals, self.model_low_preds[-1], 'b-', label='Low Variance (RichMLP)', lw=2)
-        ax.plot(t_vals, self.model_high_preds[-1], 'r-', label='High Variance (LazyMLP)', lw=2)
-        ax.axvline(x=0.5, color='gray', linestyle='--', lw=1, label='Actual Midpoint (t=0.5)')
+        l_preds, h_preds = np.array(self.model_low_preds), np.array(self.model_high_preds)
+        l_mean, l_std = np.mean(l_preds, axis=0), np.std(l_preds, axis=0)
+        h_mean, h_std = np.mean(h_preds, axis=0), np.std(h_preds, axis=0)
 
-        for mu, color, label in [(self.low_params[-1][0], 'blue', 'Low Variance (RichMLP)'),
-                                 (self.high_params[-1][0], 'red', 'High Variance (LazyMLP)')]:
-            if not np.isnan(mu):
-                ax.axvline(x=mu, color=color, linestyle='--', lw=1, alpha=0.3, label=f'{label} Fit $\\mu$={mu:.2f}')
+        l_r2, h_r2 = np.nanmean(self.low_errors), np.nanmean(self.high_errors)
+        l_min_r2, h_min_r2 = np.nanmin(self.low_errors), np.nanmin(self.high_errors)
 
-        ax.set(title="Dynamic Range", xlabel="Input space on the line between (0,1) to (1,0)",
-               ylabel="Model Prediction (Sigmoid)", xticks=[0, 0.5, 1], xticklabels=['(0,1)', '(0.5,0.5)', '(1,0)'])
-        ax.title.set_weight('bold')
+        v_l_mu, v_l_sig = [p[0] for p in self.low_params if not np.isnan(p[0])], [p[1] for p in self.low_params if
+                                                                                  not np.isnan(p[1])]
+        v_h_mu, v_h_sig = [p[0] for p in self.high_params if not np.isnan(p[0])], [p[1] for p in self.high_params if
+                                                                                   not np.isnan(p[1])]
+
+        l_fit_curve = norm.cdf(t_vals, np.mean(v_l_mu), np.mean(v_l_sig)) if v_l_mu else np.zeros_like(t_vals)
+        h_fit_curve = norm.cdf(t_vals, np.mean(v_h_mu), np.mean(v_h_sig)) if v_h_mu else np.zeros_like(t_vals)
+
+        line_l_emp, = ax.plot(t_vals, l_mean, color='dodgerblue', linestyle='-', lw=2, alpha=0.3)
+        ax.fill_between(t_vals, l_mean - l_std, l_mean + l_std, color='dodgerblue', alpha=0.1)
+        line_l_fit, = ax.plot(t_vals, l_fit_curve, color='darkblue', linestyle='-', lw=2.5)
+
+        line_h_emp, = ax.plot(t_vals, h_mean, color='salmon', linestyle='-', lw=2, alpha=0.3)
+        ax.fill_between(t_vals, h_mean - h_std, h_mean + h_std, color='salmon', alpha=0.1)
+        line_h_fit, = ax.plot(t_vals, h_fit_curve, color='darkred', linestyle='-', lw=2.5)
+
+        line_mid = ax.axvline(x=0.5, color='gray', linestyle='--', lw=1, label='Actual Midpoint (t=0.5)')
+
+        if v_l_mu: ax.axvline(x=np.mean(v_l_mu), color='darkblue', linestyle='--', lw=1, alpha=0.5)
+        if v_h_mu: ax.axvline(x=np.mean(v_h_mu), color='darkred', linestyle='--', lw=1, alpha=0.5)
+
+        def get_stat_str(name, vals):
+            res = f"{name} Avg: {np.mean(vals):.2f}" if vals else f"{name} Avg: N/A"
+            return res + (f" (Var: {np.var(vals):.4f})" if num_simulations > 1 and len(vals) > 1 else "")
+
+        handles = [
+            Line2D([], [], color='none', label=r'$\bf{Low\ Variance\ Model:}$'),
+            Line2D([], [], color='darkblue', lw=2.5, label=r'Parametric Fit (Mean $\mu, \sigma$)'),
+            Line2D([], [], color='dodgerblue', lw=2, alpha=0.3, label='Mean Across Sigmoids'),
+            Line2D([], [], color='none', label=get_stat_str(r"Fit $\mu$", v_l_mu)),
+            Line2D([], [], color='none', label=get_stat_str(r"Fit $\sigma$", v_l_sig)),
+            Line2D([], [], color='none', label=""),
+            Line2D([], [], color='none', label=r'$\bf{High\ Variance\ Model:}$'),
+            Line2D([], [], color='darkred', lw=2.5, label=r'Parametric Fit (Mean $\mu, \sigma$)'),
+            Line2D([], [], color='salmon', lw=2, alpha=0.3, label='Mean Across Sigmoids'),
+            Line2D([], [], color='none', label=get_stat_str(r"Fit $\mu$", v_h_mu)),
+            Line2D([], [], color='none', label=get_stat_str(r"Fit $\sigma$", v_h_sig)),
+            Line2D([], [], color='none', label=""), line_mid
+        ]
+
+        ax.set(title=f"Dynamic Range ({num_simulations} Runs Averaged)",
+               xlabel="Input space on the line between (0,1) to (1,0)", ylabel="Model Prediction (Sigmoid)",
+               xticks=[0, 0.5, 1], xticklabels=['(0,1)', '(0.5,0.5)', '(1,0)'])
+        ax.title.set_weight('bold');
         ax.title.set_size(14)
-        ax.set_ylim(-0.05, 1.05)
+        ax.set_ylim(-0.05, 1.05);
         ax.grid(True, linestyle='--', alpha=0.4)
 
-        txt_cfg = (f"$\\mathbf{{IDR\\ Simulation\\ Configurations}}$\n"
-                   f"sd: {self.sd}\nAct: '{self.act_type}'\nOpt: '{self.opt_type}'\n"
-                   f"Epochs: {self.epochs}\nSeed: {seed}\nw_l: {self.w_l}\nw_h: {self.w_h}\nb_l: {self.b_l}\nb_h: {self.b_h}")
+        r2_str = f"Low Var: Avg {l_r2:.2f}" + (
+            f" (Worst: {l_min_r2:.2f})" if num_simulations > 1 else "") + f"\nHigh Var: Avg {h_r2:.2f}" + (
+                     f" (Worst: {h_min_r2:.2f})" if num_simulations > 1 else "")
+        ax.text(0.02, 0.95, f"$\\mathbf{{Fit\\ Reliability\\ (R^2)}}$\n{r2_str}", transform=ax.transAxes, fontsize=10,
+                va='top', ha='left',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8, edgecolor='gray'))
 
-        ax.text(1.045, 0.985, txt_cfg, transform=ax.transAxes, fontsize=10, va='top', ha='left',
+        txt_cfg = (
+            f"$\\mathbf{{IDR\\ Simulation\\ Configurations}}$\nRuns: {num_simulations}\nsd: {self.sd}\nAct: '{self.act_type}'\nOpt: '{self.opt_type}'\nEpochs: {self.epochs}\nStart Seed: {start_seed}\nw_l: {self.w_l}\nw_h: {self.w_h}\nb_l: {self.b_l}\nb_h: {self.b_h}")
+        ax.text(1.02, 0.985, txt_cfg, transform=ax.transAxes, fontsize=8, va='top', ha='left',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
-        ax.legend(loc='upper left', bbox_to_anchor=(1.03, 0.56), frameon=True, edgecolor='gray')
 
+        ax.legend(handles=handles, loc='lower left', bbox_to_anchor=(1.02, 0.0), frameon=True, edgecolor='gray',
+                  fontsize=8)
         fig.subplots_adjust(right=0.60)
-        self._save_fig("sigmoids")
         plt.show()
+
 
     def plot_histograms(self, num_seeds=50):
         self._reset_data()
@@ -159,8 +204,6 @@ class IDR_check:
         fig.text(0.5, 0.02, cfg_txt, ha='center', va='bottom', fontsize=10,
                  bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
         fig.subplots_adjust(bottom=0.15)
-
-        self._save_fig("histograms")
         plt.show()
 
     def plot_sigmoid_SDs(self, samples_per_b_w=20, epochs_per_simulation=None,
