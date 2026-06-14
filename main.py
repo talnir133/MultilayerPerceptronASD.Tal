@@ -20,25 +20,26 @@ CONFIG = {
 if __name__ == '__main__':
     # Simulation Running
     # s = Simulation(CONFIG).run()
-    s = averaged_simulation(CONFIG,1)
-    s = SimulationAnalyzer(s, CONFIG)
+    # s = averaged_simulation(CONFIG,1)
+    # s = SimulationAnalyzer(s, CONFIG)
     # s.plot_mae()
     # s.plot_mae(sub_type="noisy")
-    s.plot_mae(sub_type="clean")
+    # s.plot_mae(sub_type="clean")
     # s.plot_mds((0,2,18), mode='animation')
     # s.plot_loss(sub_type="noisy")
     # s.plot_accuracy()
     # s.plot_parameter_distributions()
     # s.plot_mds(tuple(range(20)), mode='animation')
     #
-    # drs = IDR_check(sd=0.5,
-    #                 activation_type="Tanh",
-    #                 w_scale_low=0.1,
-    #                 w_scale_high=0.1,
-    #                 b_scale_low=0.1,
-    #                 b_scale_high=2,
-    #                 epochs=50)
+    drs = IDR_check(sd=0.5,
+                    activation_type="Tanh",
+                    w_scale_low=0.1,
+                    w_scale_high=0.1,
+                    b_scale_low=0.1,
+                    b_scale_high=2,
+                    epochs=50,
+                    hidden_size=1000)
 
     # drs.plot_sigmoids(seed=0)
     # drs.plot_histograms(20)
-    # drs.plot_sigmoid_SDs(samples_per_b_w = 50, b_range=(0.1, 2), w_range=(0.1, 20), dots_density = 10)
+    drs.plot_sigmoid_SDs(samples_per_b_w = 100, b_range=(0.1, 2), w_range=(0.1, 20), dots_density = 3, epochs_per_simulation=50)

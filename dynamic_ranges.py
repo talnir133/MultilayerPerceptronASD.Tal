@@ -207,8 +207,7 @@ class IDR_check:
         plt.show()
 
     def plot_sigmoid_SDs(self, samples_per_b_w=20, epochs_per_simulation=None,
-                         b_range=(0.1, 2), w_range=(0.1, 5), dots_density=10):
-        """Maps the Dynamic Range (SD) across a grid of weight and bias initialization scales."""
+                         b_range=(0.1, 2), w_range=(0.1, 20), dots_density=10):
         w_vals, b_vals, sd_vals, r2_vals = [], [], [], []
         seed_counter = self.seed
         run_epochs = epochs_per_simulation if epochs_per_simulation is not None else self.epochs
@@ -242,44 +241,90 @@ class IDR_check:
                             h_r2s.append(self.high_errors[-1])
 
                     if l_sds:
-                        w_vals.append(p1[0]);
-                        b_vals.append(p1[1]);
+                        w_vals.append(p1[0])
+                        b_vals.append(p1[1])
                         sd_vals.append(np.mean(l_sds))
                         r2_vals.append(np.mean(l_r2s))
                     pbar.update(1)
 
                     if h_sds and i + 1 < len(grid):
-                        w_vals.append(p2[0]);
-                        b_vals.append(p2[1]);
+                        w_vals.append(p2[0])
+                        b_vals.append(p2[1])
                         sd_vals.append(np.mean(h_sds))
                         r2_vals.append(np.mean(h_r2s))
                         pbar.update(1)
 
         self.config["exp_blocks"][0]["epochs"] = self.epochs
 
-        # Calculate statistics for the display title (converted to percentages)
         avg_r2 = np.nanmean(r2_vals) * 100
         min_r2 = np.nanmin(r2_vals) * 100
 
-        # Create interactive Plotly 3D scatter plot
         fig = go.Figure(data=[go.Scatter3d(
             x=w_vals, y=b_vals, z=sd_vals, mode='markers',
             marker=dict(size=6, color=sd_vals, colorscale='Viridis', opacity=0.8,
                         line=dict(width=1, color='black'), colorbar=dict(title="Mean SD (σ)"))
         )])
 
-        # Set title with Fit Reliability info
+        cfg = self.config
+        txt = "<b>Simulation Configurations:</b><br><br>"
+
+        txt += "<b>Input:</b><br>"
+        txt += f"   features_types: {cfg.get('features_types', 'N/A')}<br>"
+        txt += f"   seed: {cfg.get('seed', 'N/A')}<br><br>"
+
+        txt += "<b>Network:</b><br>"
+        for k in ['hidden_size', 'n_hidden', 'optimizer_type', 'activation_type', 'batch_size', 'lr']:
+            val = cfg.get(k, 'N/A')
+            val_str = ', '.join(map(str, val)) if isinstance(val, list) else str(val)
+            txt += f"   {k}: {val_str}<br>"
+        txt += "<br>"
+
+        txt += "<b>Experiment Blocks:</b><br>"
+        for idx, block in enumerate(cfg.get('exp_blocks', []), 1):
+            zf = block.get('zero_features', [])
+            zf_str = "None" if not zf and zf != 0 else (
+                ",".join(map(str, zf)) if isinstance(zf, (list, tuple)) else str(zf))
+            rule_name = block.get('rule', 'upper_half')
+            a_class = block.get('alpha_class', 1)
+            a_rec = block.get('alpha_rec', 0)
+            b_sd = block.get('sd', 0.0)
+
+            txt += f"   {idx}. {block.get('block_name', 'Unnamed')}, eps: {block.get('epochs', 0)}, zero: {zf_str}, a_c: {a_class}, a_r: {a_rec}, sd: {b_sd}<br>"
+
+            rule_params = [f"{k}={v}" for k, v in block.items() if
+                           k not in ['block_name', 'epochs', 'zero_features', 'rule', 'alpha_class', 'alpha_rec', 'sd']]
+            params_str = f"({', '.join(rule_params)})" if rule_params else ""
+            txt += f"      Rule: {rule_name} {params_str}<br>"
+
         fit_info = f"<br><br><sup>Activation Function: {self.act_type} | Epochs: {run_epochs}<br>Fit Reliability (R²): Average {avg_r2:.1f}% | Worst Fit: {min_r2:.1f}%</sup>"
+
         fig.update_layout(
             title=f"Dynamic Range (fitted Gaussian CDF's sd) vs. Weights & Bias Scales{fit_info}",
             scene=dict(xaxis_title="Weight Scale (w)", yaxis_title="Bias Scale (b)", zaxis_title="Mean SD (σ)"),
-            margin=dict(l=0, r=0, b=0, t=80)
+            margin=dict(l=0, r=0, b=0, t=80),
+            annotations=[
+                dict(
+                    text=txt,
+                    align='left',
+                    showarrow=False,
+                    xref='paper',
+                    yref='paper',
+                    x=0.01,
+                    y=0.95,
+                    xanchor='left',
+                    yanchor='top',
+                    bgcolor='rgba(249, 249, 249, 0.85)',
+                    bordercolor='gray',
+                    borderwidth=1,
+                    font=dict(size=10, color='black')
+                )
+            ]
         )
 
         file_path = os.path.join(self.save_dir, "sigmoid_sd_regression_3D.html")
         c = 1
         while os.path.exists(file_path):
-            file_path = os.path.join(self.save_dir, f"sigmoid_sd_regression_3D_{c}.html");
+            file_path = os.path.join(self.save_dir, f"sigmoid_sd_regression_3D_{c}.html")
             c += 1
         fig.write_html(file_path)
         fig.show()

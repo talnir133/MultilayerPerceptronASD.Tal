@@ -821,14 +821,14 @@ class SimulationAnalyzer:
             rd = {k: [] for k in all_runs.keys()}
             for _, b_res in run_res:
                 if plot_type in ["both", "data"]:
-                    rd["low_data"].extend(b_res["data_low"]["data_entropy"]);
+                    rd["low_data"].extend(b_res["data_low"]["data_entropy"])
                     rd["high_data"].extend(b_res["data_high"]["data_entropy"])
-                    rd["low_data_acc"].extend(b_res["data_low"]["data_rec_acc"]);
+                    rd["low_data_acc"].extend(b_res["data_low"]["data_rec_acc"])
                     rd["high_data_acc"].extend(b_res["data_high"]["data_rec_acc"])
                 if plot_type in ["both", "center"]:
-                    rd["low_center"].extend(b_res["data_low"]["center_entropy"]);
+                    rd["low_center"].extend(b_res["data_low"]["center_entropy"])
                     rd["high_center"].extend(b_res["data_high"]["center_entropy"])
-                    rd["low_center_acc"].extend(b_res["data_low"]["center_rec_acc"]);
+                    rd["low_center_acc"].extend(b_res["data_low"]["center_rec_acc"])
                     rd["high_center_acc"].extend(b_res["data_high"]["center_rec_acc"])
             for k in rd:
                 if rd[k]: all_runs[k].append(rd[k])
@@ -837,11 +837,10 @@ class SimulationAnalyzer:
         styles = {"low_data": ("#8B0000", "Low Var"), "high_data": ("#FF4500", "High Var"),
                   "low_center": ("#00008B", "Low Var"), "high_center": ("#4169E1", "High Var")}
 
-        # חישוב Scale רק על בסיס ה-Data Entropy
         ld_m = np.mean(all_runs["low_data"], axis=0) if all_runs["low_data"] else None
         hd_m = np.mean(all_runs["high_data"], axis=0) if all_runs["high_data"] else None
         scale_factor = np.sum(ld_m) / np.sum(hd_m) if (
-                    ld_m is not None and hd_m is not None and np.sum(hd_m) > 1e-6) else 1.0
+                ld_m is not None and hd_m is not None and np.sum(hd_m) > 1e-6) else 1.0
 
         handles_data, handles_center = [], []
         for k, (c, lbl) in styles.items():
@@ -871,19 +870,20 @@ class SimulationAnalyzer:
         for ax in [ax1, ax_mid, ax2]:
             for i in range(1, len(bounds) - 1): ax.axvline(x=bounds[i], color='gray', linestyle='--', lw=1, alpha=0.7)
             ax.grid(True, which="both", ls="-", alpha=0.4)
-            ax.set_xlim(x_range[0], x_range[-1])
+            if ax != ax_mid: ax.set_xlim(x_range[0], x_range[-1])
 
-        ax1.set_ylim(-0.001, 1.05);
-        ax_mid.set_ylim(-0.001, 1.05);
+        ax1.set_ylim(-0.001, 1.05)
+        ax_mid.set_ylim(-0.001, 1.05)
+        ax_mid.set_xlim(x_range[0], x_range[-1])
         ax2.set_ylim(0.5, 1.05)
         ax_mid.set_xticks([])
         for i, b in enumerate(blocks): ax2.text((bounds[i] + bounds[i + 1]) / 2, 0.55, b,
                                                 transform=ax2.get_xaxis_transform(), ha='center', va='bottom',
                                                 fontsize=10, fontweight='bold', color='darkslategray')
 
-        ax1.set_ylabel('Binary Entropy', fontsize=12);
-        ax_mid.set_ylabel('Binary Entropy', fontsize=12);
-        ax2.set_ylabel('Reconstruction Acc', fontsize=12);
+        ax1.set_ylabel('Binary Entropy', fontsize=12)
+        ax_mid.set_ylabel('Binary Entropy', fontsize=12)
+        ax2.set_ylabel('Reconstruction Acc', fontsize=12)
         ax2.set_xlabel('Epochs', fontsize=12)
         ax_mid.text(0.5, 0.95, f"High Var X-Axis SCALED by {scale_factor:.3f}", transform=ax_mid.transAxes, ha='center',
                     va='top', fontsize=10, fontweight='bold',
@@ -898,12 +898,13 @@ class SimulationAnalyzer:
             [Line2D([], [], color='none', label=r'$\bf{Near\ Trained\ Data:}$')] + handles_data)
         if handles_center: final_handles.extend(
             [Line2D([], [], color='none', label=r'$\bf{Near\ Center:}$')] + handles_center)
+
         ax1.legend(handles=final_handles, loc='lower left', bbox_to_anchor=(1.02, 0.0), frameon=True, edgecolor='gray',
                    fontsize=10)
 
         if show_config:
-            cfg_ax = fig.add_axes([0.76, 0.15, 0.22, 0.70])
+            cfg_ax = fig.add_axes([0.76, 0.1, 0.22, 0.8])
             cfg_ax.axis('off')
             self._add_config_info(cfg_ax, show_config=show_config)
-        self._save_fig(f"DR_Tracker_{plot_type}_{self.exp_name.replace(' ', '_')}");
+        self._save_fig(f"DR_Tracker_{plot_type}_{self.exp_name.replace(' ', '_')}")
         plt.show()
