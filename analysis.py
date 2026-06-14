@@ -802,57 +802,50 @@ class SimulationAnalyzer:
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
 
-    def plot_dr_tracker(self, plot_type="both", show_std=True, show_config=True):
+    def plot_dr_tracker(self, env="current", show_std=True, show_config=True):
         from matplotlib.lines import Line2D
         import matplotlib as mpl
-        if plot_type not in ["both", "data", "center"]: raise ValueError(
-            "plot_type must be 'both', 'data', or 'center'")
 
         fig, (ax1, ax_mid, ax2) = plt.subplots(3, 1, figsize=(15, 11), gridspec_kw={'height_ratios': [2, 1, 1]})
         fig.subplots_adjust(right=0.74 if show_config else 0.85, top=0.9, bottom=0.1, hspace=0.15)
 
         bounds, blocks = [0], [name for name, _ in self.runs[0]]
-        for _, res in self.runs[0]: bounds.append(bounds[-1] + len(res["data_low"]["data_entropy"]))
+        for b_name, res in self.runs[0]:
+            target_env = b_name if env == "current" else env
+            bounds.append(bounds[-1] + len(res["data_low"]["decoder_entropy"][target_env]))
 
-        all_runs = {k: [] for k in
-                    ["low_data", "low_center", "high_data", "high_center", "low_data_acc", "low_center_acc",
-                     "high_data_acc", "high_center_acc"]}
+        all_runs = {"low": [], "high": [], "low_acc": [], "high_acc": [], "low_conv": [], "high_conv": []}
         for run_res in self.runs:
             rd = {k: [] for k in all_runs.keys()}
-            for _, b_res in run_res:
-                if plot_type in ["both", "data"]:
-                    rd["low_data"].extend(b_res["data_low"]["data_entropy"])
-                    rd["high_data"].extend(b_res["data_high"]["data_entropy"])
-                    rd["low_data_acc"].extend(b_res["data_low"]["data_rec_acc"])
-                    rd["high_data_acc"].extend(b_res["data_high"]["data_rec_acc"])
-                if plot_type in ["both", "center"]:
-                    rd["low_center"].extend(b_res["data_low"]["center_entropy"])
-                    rd["high_center"].extend(b_res["data_high"]["center_entropy"])
-                    rd["low_center_acc"].extend(b_res["data_low"]["center_rec_acc"])
-                    rd["high_center_acc"].extend(b_res["data_high"]["center_rec_acc"])
+            for b_name, b_res in run_res:
+                target_env = b_name if env == "current" else env
+                rd["low"].extend(b_res["data_low"]["decoder_entropy"][target_env])
+                rd["high"].extend(b_res["data_high"]["decoder_entropy"][target_env])
+                rd["low_acc"].extend(b_res["data_low"]["decoder_acc"][target_env])
+                rd["high_acc"].extend(b_res["data_high"]["decoder_acc"][target_env])
+                if "decoder_converged" in b_res["data_low"]:
+                    rd["low_conv"].extend(b_res["data_low"]["decoder_converged"][target_env])
+                    rd["high_conv"].extend(b_res["data_high"]["decoder_converged"][target_env])
+
             for k in rd:
                 if rd[k]: all_runs[k].append(rd[k])
 
         x_range = np.arange(bounds[-1])
-        styles = {"low_data": ("#8B0000", "Low Var"), "high_data": ("#FF4500", "High Var"),
-                  "low_center": ("#00008B", "Low Var"), "high_center": ("#4169E1", "High Var")}
+        styles = {"low": ("#8B0000", "Low Var"), "high": ("#FF4500", "High Var")}
 
-        ld_m = np.mean(all_runs["low_data"], axis=0) if all_runs["low_data"] else None
-        hd_m = np.mean(all_runs["high_data"], axis=0) if all_runs["high_data"] else None
+        ld_m = np.mean(all_runs["low"], axis=0) if all_runs["low"] else None
+        hd_m = np.mean(all_runs["high"], axis=0) if all_runs["high"] else None
         scale_factor = np.sum(ld_m) / np.sum(hd_m) if (
                 ld_m is not None and hd_m is not None and np.sum(hd_m) > 1e-6) else 1.0
 
-        handles_data, handles_center = [], []
+        handles_data = []
         for k, (c, lbl) in styles.items():
             if not all_runs[k]: continue
             m_val = np.mean(all_runs[k], axis=0)
             s_val = np.std(all_runs[k], axis=0) if (show_std and self.is_multi) else None
 
             line, = ax1.plot(x_range, m_val, color=c, linestyle="-", linewidth=2.5, label=lbl)
-            if "data" in k:
-                handles_data.append(line)
-            else:
-                handles_center.append(line)
+            handles_data.append(line)
             if s_val is not None: ax1.fill_between(x_range, m_val - s_val, m_val + s_val, color=c, alpha=0.15)
 
             x_mid = x_range * scale_factor if "high" in k else x_range
@@ -885,7 +878,16 @@ class SimulationAnalyzer:
         ax_mid.set_ylabel('Binary Entropy', fontsize=12)
         ax2.set_ylabel('Reconstruction Acc', fontsize=12)
         ax2.set_xlabel('Epochs', fontsize=12)
-        ax_mid.text(0.5, 0.95, f"High Var X-Axis SCALED by {scale_factor:.3f}", transform=ax_mid.transAxes, ha='center',
+
+        # Calculate convergence stats
+        conv_text = ""
+        if all_runs["low_conv"] and all_runs["high_conv"]:
+            low_conv_rate = np.mean(all_runs["low_conv"]) * 100
+            high_conv_rate = np.mean(all_runs["high_conv"]) * 100
+            conv_text = f"\nConv. Rate - Low: {low_conv_rate:.1f}% | High: {high_conv_rate:.1f}%"
+
+        ax_mid.text(0.5, 0.95, f"High Var X-Axis SCALED by {scale_factor:.3f}{conv_text}", transform=ax_mid.transAxes,
+                    ha='center',
                     va='top', fontsize=10, fontweight='bold',
                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
 
@@ -895,9 +897,7 @@ class SimulationAnalyzer:
 
         final_handles = []
         if handles_data: final_handles.extend(
-            [Line2D([], [], color='none', label=r'$\bf{Near\ Trained\ Data:}$')] + handles_data)
-        if handles_center: final_handles.extend(
-            [Line2D([], [], color='none', label=r'$\bf{Near\ Center:}$')] + handles_center)
+            [Line2D([], [], color='none', label=r'$\bf{Decoder\ Performance:}$')] + handles_data)
 
         ax1.legend(handles=final_handles, loc='lower left', bbox_to_anchor=(1.02, 0.0), frameon=True, edgecolor='gray',
                    fontsize=10)
@@ -906,5 +906,5 @@ class SimulationAnalyzer:
             cfg_ax = fig.add_axes([0.76, 0.1, 0.22, 0.8])
             cfg_ax.axis('off')
             self._add_config_info(cfg_ax, show_config=show_config)
-        self._save_fig(f"DR_Tracker_{plot_type}_{self.exp_name.replace(' ', '_')}")
+        self._save_fig(f"DR_Tracker_{env}_{self.exp_name.replace(' ', '_')}")
         plt.show()
