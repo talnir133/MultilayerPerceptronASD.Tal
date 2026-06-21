@@ -50,9 +50,8 @@ class Simulation:
 
     def run_block(self, models, optimizers, cfg, test_envs):
         print(f"\n--- Running Block: {cfg['block_name']} ---")
-        decoder_cfg=cfg["decoder"]
-        rule_name = cfg["rule"]
-        rule_to_apply = partial(RULES_REGISTRY[rule_name], **cfg)
+
+        rule_to_apply = partial(RULES_REGISTRY[cfg["rule"]], **cfg)
 
         X = self.dataset.get_block_data(cfg.get("zero_features", [])).to(self.device)
         y = rule_to_apply(X).to(self.device)
@@ -63,8 +62,8 @@ class Simulation:
         data_high = create_tracker(test_envs, self.X_global)
 
         if self.track_metrics:
-            callback_low = get_metric_callback(data_low, test_envs, X_global_dev, decoder_cfg)
-            callback_high = get_metric_callback(data_high, test_envs, X_global_dev, decoder_cfg)
+            callback_low = get_metric_callback(data_low, test_envs, X_global_dev, cfg["decoder"], cfg["features_types"])
+            callback_high = get_metric_callback(data_high, test_envs, X_global_dev, cfg["decoder"], cfg["features_types"])
         else:
             callback_low, callback_high = None, None
 
@@ -123,7 +122,8 @@ class Simulation:
 
             # Decoder Defaults
         dec_cfg = block_config.setdefault("decoder", {})
-        dec_cfg.setdefault("sd", 0.0)
+        dec_cfg.setdefault("train_sd", 0.0)
+        dec_cfg.setdefault("test_sd", 0.3)
         dec_cfg.setdefault("samples_per_point", 20)
         dec_cfg.setdefault("freq", 5)
         dec_cfg.setdefault("epochs", 100)
@@ -162,21 +162,11 @@ class Simulation:
             y_test = rule_func(X_test).to(self.device)
             mask = get_noise_mask(b_cfg, X_test).to(self.device)
 
-            # --- Decoder Data ---
-            dec_sd = b_cfg["decoder"]["sd"]
-            M = 1 if dec_sd == 0 else b_cfg["decoder"]["samples_per_point"]
-
-            Y_NM_clean = X_test.clone().repeat(M, 1)
-            raw_noise = torch.randn_like(Y_NM_clean) * dec_sd
-            X_NM_noisy = Y_NM_clean + (raw_noise * mask.repeat(M, 1))
-
             test_envs[b_name] = {
                 "X": X_test,
                 "y": y_test[:, 0:1],
                 "mask": mask,
-                "sd": b_cfg["sd"],
-                "X_decoder_noisy": X_NM_noisy,
-                "y_decoder_clean": Y_NM_clean
+                "sd": b_cfg["sd"]
             }
 
         return test_envs

@@ -124,73 +124,184 @@ def train_classifier(model, optimizer, X_base, rule_func, epochs, batch_size, no
 # Logistic Regression Decoder
 # ==========================================
 
+
+import torch
+import torch.nn as nn
+
+
 class LogisticDecoder(nn.Module):
-    def __init__(self, input_size, output_size):
-        super(LogisticDecoder, self).__init__()
-        self._layers = nn.Sequential()
-        self._layers.add_module('fc_decoder', nn.Linear(input_size, output_size))
+    """
+    Multinomial Logistic Regression (Softmax Regression) Decoder.
+    Evaluates the decisiveness and accuracy of network representations.
+    Assumes feature independence, creating a separate model per feature.
+    """
 
-    def forward(self, x):
-        """Standard forward pass for the logistic decoder."""
-        return self._layers(x)
+    def __init__(self, input_size, features_types):
+        super().__init__()
+        self.features_types = features_types
+        self.num_features = len(features_types)
+        self.loss_trajectory = []
 
+        self.feature_probes = nn.ModuleList([
+            nn.Linear(input_size, dim) for dim in features_types
+        ])
 
-def train_logistic_decoder(activations, clean_targets, epochs=100, lr=0.1, feature_mask=None):
-    # 1. Setup Model, Optimizer & Criterion
-    input_size = activations.shape[1]
-    output_size = clean_targets.shape[1]
-    device = activations.device
+    def forward(self, h):
+        """
+        Returns a list of raw logits for each feature separately.
+        """
+        return [probe(h) for probe in self.feature_probes]
 
-    decoder = LogisticDecoder(input_size, output_size).to(device)
-    optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    criterion = nn.BCEWithLogitsLoss()
-    clean_targets_float = clean_targets.float()
+    def fit(self, classification_model, X_clean, train_noise_sd, noise_mask, target_layer="fc1", epochs=100, lr=0.1):
+        """
+        Trains the regression on N samples, generating dynamic noise per epoch.
+        Stores the loss trajectory in the class instance.
+        """
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        criterion = nn.CrossEntropyLoss()
 
-    # 2. Training Step (Iterative Optimization)
-    with torch.enable_grad():
-        decoder.train()
-        prev_loss = float('inf')
-        converged = False
-        patience = 3
-        patience_counter = 0
+        true_labels = []
+        start_idx = 0
+        for dim in self.features_types:
+            labels = torch.argmax(X_clean[:, start_idx: start_idx + dim], dim=1)
+            true_labels.append(labels)
+            start_idx += dim
 
-        for _ in range(epochs):
-            optimizer.zero_grad()
-            outputs = decoder(activations)
-            loss = criterion(outputs, clean_targets_float)
+        self.loss_trajectory = []
+        self.train()
 
-            # Early stopping if the model has converged
-            loss_diff = abs(prev_loss - loss.item())
-            if loss_diff < 1e-4:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    converged = True
+        with torch.enable_grad():
+            for _ in range(epochs):
+                optimizer.zero_grad()
+
+                X_noisy = X_clean + (torch.randn_like(X_clean) * train_noise_sd * noise_mask)
+
+                classification_model.eval()
+                with torch.no_grad():
+                    out = X_noisy
+                    for name, layer in classification_model._layers.named_children():
+                        out = layer(out)
+                        if name == target_layer:
+                            classification_activations = out.detach()
+                            break
+
+                logits_per_feature = self.forward(classification_activations)
+                total_loss = sum(criterion(logits_per_feature[k], true_labels[k]) for k in range(self.num_features))
+
+                total_loss.backward()
+                optimizer.step()
+
+                # Tracking the loss trajectory using Bayesian optimal labels
+                closest_clean_idx = torch.cdist(X_noisy, X_clean).argmin(dim=1)
+                bayes_labels = []
+                start_idx = 0
+                for dim in self.features_types:
+                    clean_labels_k = torch.argmax(X_clean[:, start_idx: start_idx + dim], dim=1)
+                    bayes_labels.append(clean_labels_k[closest_clean_idx])
+                    start_idx += dim
+                tracking_loss = [criterion(logits_per_feature[k], bayes_labels[k]).item() for k in range(self.num_features)]
+                self.loss_trajectory.append(tracking_loss)
+
+    def measure_decisiveness(self, classification_activations):
+        """
+        Measures decisiveness. Normalized to [0, 1].
+        1.0 = perfect decisiveness (One-Hot).
+        0.0 = completely confused (Uniform distribution).
+        """
+        self.eval()
+        decisiveness_scores = []
+        import math
+
+        with torch.no_grad():
+            logits_per_feature = self.forward(classification_activations)
+
+            for k, dim in enumerate(self.features_types):
+                probs = torch.softmax(logits_per_feature[k], dim=1)
+                p_c = torch.clamp(probs, 1e-7, 1.0)
+                entropy_k = -torch.sum(p_c * torch.log2(p_c), dim=1)
+
+                max_entropy = math.log2(dim) if dim > 1 else 1.0
+                normalized_entropy = entropy_k / max_entropy
+
+                decisiveness = 1.0 - normalized_entropy
+                decisiveness_scores.append(decisiveness.mean().item())
+
+        return decisiveness_scores
+
+    def measure_decision_boundary_accuracy(self, classification_activations, X_noisy, X_clean):
+        """
+        Measures accuracy by comparing the hard assignment (argmax)
+        of the model to the optimal Bayes classifier (closest clean point).
+        """
+        self.eval()
+        accuracies = []
+
+        with torch.no_grad():
+            logits_per_feature = self.forward(classification_activations)
+
+            # Bayesian Evaluation (Simplified to exact geometric nearest neighbor)
+            closest_clean_idx = torch.cdist(X_noisy, X_clean).argmin(dim=1)
+
+            start_idx = 0
+            for k, dim in enumerate(self.features_types):
+                # Model assignment
+                model_argmax = torch.argmax(logits_per_feature[k], dim=1)
+
+                # Bayes assignment
+                clean_labels_k = torch.argmax(X_clean[:, start_idx: start_idx + dim], dim=1)
+                bayes_argmax = clean_labels_k[closest_clean_idx]
+
+                # Comparison
+                accuracy = (model_argmax == bayes_argmax).float().mean().item()
+                accuracies.append(accuracy)
+
+                start_idx += dim
+
+        return accuracies
+
+    def evaluate(self,  classification_model, X_clean, noise_mask, test_noise_sd=0.3, target_layer="fc1", samples_per_point=20):
+        """
+        Consolidates the full evaluation: near data, near center, and loss trajectory.
+        """
+        results = {}
+        M = samples_per_point
+
+        # 1. Evaluation Near Data (Interpolation)
+        X_clean_repeated = X_clean.repeat(M, 1)
+        mask_repeated = noise_mask.repeat(M, 1)
+        X_noisy_data = X_clean_repeated + (torch.randn_like(X_clean_repeated) * test_noise_sd * mask_repeated)
+
+        classification_model.eval()
+        with torch.no_grad():
+            out = X_noisy_data
+            for name, layer in classification_model._layers.named_children():
+                out = layer(out)
+                if name == target_layer:
+                    classification_activations_data = out.detach()
                     break
-            else:
-                patience_counter = 0
 
-            prev_loss = loss.item()
+        results["near_data_decisiveness"] = self.measure_decisiveness(classification_activations_data)
+        results["near_data_accuracy"] = self.measure_decision_boundary_accuracy(classification_activations_data,
+                                                                                X_noisy_data, X_clean)
 
-            loss.backward()
-            optimizer.step()
+        # 2. Evaluation Near Center (Extrapolation)
+        X_center = torch.full_like(X_clean, 0.5)
+        X_center_repeated = X_center.repeat(M, 1)
+        X_noisy_center = X_center_repeated + (torch.randn_like(X_center_repeated) * test_noise_sd * mask_repeated)
 
-    # 3. DR and Accuracy Calculation
-    decoder.eval()
-    with torch.no_grad():
-        logits = decoder(activations)
-        probs = torch.sigmoid(logits)
+        with torch.no_grad():
+            out = X_noisy_center
+            for name, layer in classification_model._layers.named_children():
+                out = layer(out)
+                if name == target_layer:
+                    classification_activations_center = out.detach()
+                    break
 
-        # Binary Entropy Calculation
-        p_c = torch.clamp(probs, 1e-7, 1.0 - 1e-7)
-        H = -p_c * torch.log2(p_c) - (1.0 - p_c) * torch.log2(1.0 - p_c)
+        results["near_center_decisiveness"] = self.measure_decisiveness(classification_activations_center)
+        results["near_center_accuracy"] = self.measure_decision_boundary_accuracy(classification_activations_center,
+                                                                                  X_noisy_center, X_clean)
 
-        # Apply feature mask if zero_features are present
-        if feature_mask is not None:
-            valid_cols = feature_mask[0] > 0
-            entropy = H[:, valid_cols].mean().item()
-            acc = ((probs > 0.5).float() == clean_targets_float)[:, valid_cols].float().mean().item()
-        else:
-            entropy = H.mean().item()
-            acc = ((probs > 0.5).float() == clean_targets_float).float().mean().item()
+        # 3. Training Loss Trajectory
+        results["loss_trajectory"] = self.loss_trajectory
 
-    return entropy, acc, converged
+        return results

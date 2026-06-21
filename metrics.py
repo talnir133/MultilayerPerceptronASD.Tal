@@ -1,7 +1,8 @@
 import numpy as np
 import torch
 from sklearn.metrics.pairwise import pairwise_distances
-from core_ml import train_logistic_decoder
+from core_ml import LogisticDecoder
+
 
 # ==========================================
 # Tracking & Metrics Collection
@@ -20,7 +21,7 @@ def create_tracker(test_envs, X_global):
         "losses_clean", "MAE_clean", "accuracy_clean",
         "losses_noisy", "MAE_noisy", "accuracy_noisy",
         "losses_noisy_optimal", "MAE_noisy_optimal", "accuracy_noisy_optimal",
-        "PR_activations", "decoder_entropy", "decoder_acc", "decoder_converged"
+        "PR_activations", "decoder_evaluation"
     ]
 
     for metric in env_specific_metrics:
@@ -29,10 +30,8 @@ def create_tracker(test_envs, X_global):
     return tracker
 
 
-def get_metric_callback(tracker, test_envs, X_global, decoder_cfg, target_layer="fc1"):
+def get_metric_callback(tracker, test_envs, X_global, decoder_cfg, features_types, target_layer="fc1"):
     epoch_counter = {"count": 0}
-    last_dec_vals = {env: {"ent": 0.0, "acc": 0.0, "conv": 1.0} for env in test_envs.keys()}
-    decoder_freq, dec_epochs, dec_lr = decoder_cfg["freq"], decoder_cfg["epochs"], decoder_cfg["lr"]
 
     def callback(current_model, loss_criterion):
 
@@ -104,29 +103,32 @@ def get_metric_callback(tracker, test_envs, X_global, decoder_cfg, target_layer=
                     ((opt_probs > 0.5) == y_env.bool()).float().mean().item())
 
             # B4. Logistic Regression Probing (Decoder Readout)
-            noisy_X_dec, clean_y_dec = env_data["X_decoder_noisy"], env_data["y_decoder_clean"]
+            if epoch_counter["count"] % decoder_cfg["freq"] == 0:
+                decoder = LogisticDecoder(
+                    input_size=env_acts.shape[1],
+                    features_types=features_types,
+                ).to(X_env.device)
 
-            if epoch_counter["count"] % decoder_freq == 0:
-                activation_tensor = noisy_X_dec
-                for name, m_layer in current_model._layers.named_children():
-                    activation_tensor = m_layer(activation_tensor)
-                    if name == target_layer:
-                        break
-
-                ent, acc, conv = train_logistic_decoder(
-                    activation_tensor.detach(),
-                    clean_y_dec,
-                    epochs=dec_epochs,
-                    lr=dec_lr,
-                    feature_mask=env_data["mask"]
+                decoder.fit(
+                    classification_model=current_model,
+                    X_clean=X_env,
+                    train_noise_sd=decoder_cfg["train_sd"],
+                    noise_mask=env_data["mask"],
+                    target_layer=target_layer,
+                    epochs=decoder_cfg["epochs"],
+                    lr=decoder_cfg["lr"]
                 )
-                last_dec_vals[env_name]["ent"] = ent
-                last_dec_vals[env_name]["acc"] = acc
-                last_dec_vals[env_name]["conv"] = float(conv)
 
-            tracker["decoder_entropy"][env_name].append(last_dec_vals[env_name]["ent"])
-            tracker["decoder_acc"][env_name].append(last_dec_vals[env_name]["acc"])
-            tracker["decoder_converged"][env_name].append(last_dec_vals[env_name]["conv"])
+                eval_results = decoder.evaluate(
+                    classification_model=current_model,
+                    X_clean=X_env,
+                    noise_mask=env_data["mask"],
+                    target_layer=target_layer,
+                    samples_per_point=decoder_cfg["samples_per_point"],
+                    test_noise_sd=decoder_cfg["test_sd"]
+                )
+
+                tracker["decoder_evaluation"][env_name].append(eval_results)
 
         epoch_counter["count"] += 1
 

@@ -70,7 +70,7 @@ class SimulationAnalyzer:
             counter += 1
         plt.savefig(file_path, bbox_inches='tight', dpi=300)
 
-    def _add_config_info(self, ax, show_config=True):
+    def _add_config_info(self, ax, show_config=True, is_dr_tracker=False):
         if not show_config:
             return
 
@@ -88,6 +88,17 @@ class SimulationAnalyzer:
                 val_str = ', '.join(map(str, val)) if isinstance(val, list) else val
                 txt += f"   {k}: {val_str}\n"
             txt += "\n"
+
+        if is_dr_tracker:
+            dec_cfg = cfg.get("decoder", {})
+            if not dec_cfg and cfg.get("exp_blocks"):
+                dec_cfg = cfg["exp_blocks"][0].get("decoder", {})
+            if dec_cfg:
+                txt += "Decoder:\n"
+                for k, v in dec_cfg.items():
+                    txt += f"   {k}: {v}\n"
+                txt += "\n"
+
         txt += "Experiment Blocks:\n"
         for idx, block in enumerate(cfg.get('exp_blocks', []), 1):
             zf = block.get('zero_features', [])
@@ -98,14 +109,14 @@ class SimulationAnalyzer:
             a_rec = block.get('alpha_rec', 0)
             b_sd = block.get('sd', 0.0)
             rule_params = [f"{k}={v}" for k, v in block.items() if
-                           k not in ['block_name', 'epochs', 'zero_features', 'rule', 'alpha_class', 'alpha_rec', 'sd']]
+                           k not in ['block_name', 'epochs', 'zero_features', 'rule', 'alpha_class', 'alpha_rec', 'sd',
+                                     'decoder']]
             params_str = f"({', '.join(rule_params)})" if rule_params else ""
             txt += f"   {idx}. {block.get('block_name', 'Unnamed')}, eps: {block.get('epochs', 0)}, zero: {zf_str}, a_c: {a_class}, a_r: {a_rec}, sd: {b_sd}\n"
             txt += f"      Rule: {rule_name} {params_str}\n"
 
         ax.text(0.0, 1.0, txt.strip(), transform=ax.transAxes, fontsize=8, va='top', ha='left',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
-
 
     def plot_metric_over_epochs(self, metric_name, envs="current_only", show_std=False, show_config=True):
         is_global_metric = isinstance(self.runs[0][0][1]["data_low"].get(metric_name), list)
@@ -323,7 +334,7 @@ class SimulationAnalyzer:
         if show_config:
             cfg_ax = fig.add_axes([0.76, 0.15, 0.22, 0.73])
             cfg_ax.axis('off')
-            self._add_config_info(cfg_ax, show_config=show_config)
+            self._add_config_info(cfg_ax, show_config=show_config, is_dr_tracker=False)
 
         self._save_fig(f"{metric_name}_{envs}_figure_{self.exp_name.replace(' ', '_')}")
         plt.show()
@@ -562,12 +573,11 @@ class SimulationAnalyzer:
         if show_config:
             cfg_ax = fig.add_axes([0.76, 0.20, 0.22, 0.65])
             cfg_ax.axis('off')
-            self._add_config_info(cfg_ax, show_config=show_config)
+            self._add_config_info(cfg_ax, show_config=show_config, is_dr_tracker=False)
 
         anim = animation.FuncAnimation(fig, update, frames=len(low_X), interval=200, repeat=False)
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
-
 
     def plot_PCs(self, epochs=(-1,), layer_name='fc1', show_config=True):
         if isinstance(epochs, int): epochs = (epochs,)
@@ -638,7 +648,7 @@ class SimulationAnalyzer:
             pca_coords['low'][0, 0] = raw_coords['low'][0, 0]
             for k in range(1, num_frames):
                 pca_coords['low'][0, k] = align_coords(raw_coords['low'][0, k],
-                                                                     pca_coords['low'][0, k - 1])
+                                                       pca_coords['low'][0, k - 1])
 
             for k in range(num_frames):
                 pca_coords['high'][0, k] = align_coords(raw_coords['high'][0, k], pca_coords['low'][0, k])
@@ -646,9 +656,9 @@ class SimulationAnalyzer:
             for r_idx in range(1, n_runs):
                 for k in range(num_frames):
                     pca_coords['low'][r_idx, k] = align_coords(raw_coords['low'][r_idx, k],
-                                                                             pca_coords['low'][0, k])
+                                                               pca_coords['low'][0, k])
                     pca_coords['high'][r_idx, k] = align_coords(raw_coords['high'][r_idx, k],
-                                                                              pca_coords['high'][0, k])
+                                                                pca_coords['high'][0, k])
 
         from matplotlib import animation
         from IPython.display import display, HTML
@@ -665,7 +675,7 @@ class SimulationAnalyzer:
             fig.subplots_adjust(right=0.74, top=0.90, wspace=0.2, hspace=0.3)
             cfg_ax = fig.add_axes([0.76, 0.15, 0.22, 0.75])
             cfg_ax.axis('off')
-            self._add_config_info(cfg_ax, show_config=show_config)
+            self._add_config_info(cfg_ax, show_config=show_config, is_dr_tracker=False)
         else:
             fig.subplots_adjust(right=0.88, top=0.90, wspace=0.2, hspace=0.3)
 
@@ -802,109 +812,217 @@ class SimulationAnalyzer:
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
 
-    def plot_dr_tracker(self, env="current", show_std=True, show_config=True):
-        from matplotlib.lines import Line2D
-        import matplotlib as mpl
+    def plot_dr_tracker(self, env="current", feature="average", show_std=True, show_config=True):
 
-        fig, (ax1, ax_mid, ax2) = plt.subplots(3, 1, figsize=(15, 11), gridspec_kw={'height_ratios': [2, 1, 1]})
-        fig.subplots_adjust(right=0.74 if show_config else 0.85, top=0.9, bottom=0.1, hspace=0.15)
+        fig = plt.figure(figsize=(16, 18))
+        gs = gridspec.GridSpec(7, 2, height_ratios=[2, 0.55, 1, 0.45, 1, 0.8, 1.5], hspace=0.0, wspace=0.05)
 
-        bounds, blocks = [0], [name for name, _ in self.runs[0]]
-        for b_name, res in self.runs[0]:
+        ax1 = fig.add_subplot(gs[0, :])
+        ax_mid = fig.add_subplot(gs[2, :])
+        ax2 = fig.add_subplot(gs[4, :])
+
+        ax4_low = fig.add_subplot(gs[6, 0])
+        ax4_high = fig.add_subplot(gs[6, 1], sharey=ax4_low)
+        ax4_high.tick_params(labelleft=False)
+
+        fig.subplots_adjust(left=0.08, right=0.74 if show_config else 0.85, top=0.92, bottom=0.08)
+
+        bounds = [0]
+        blocks = [name for name, _ in self.runs[0]]
+        x_vals_all = []
+        freq_per_block = []
+
+        for b_idx, (b_name, res) in enumerate(self.runs[0]):
+            b_cfg = self.config.get("exp_blocks", [])[b_idx] if b_idx < len(self.config.get("exp_blocks", [])) else {}
+            freq = b_cfg.get("decoder", {}).get("freq", self.config.get("decoder", {}).get("freq", 5))
+            freq_per_block.append(freq)
+
+            n_eps_in_block = len(res["data_low"]["losses_clean"][list(res["data_low"]["losses_clean"].keys())[0]])
+            bounds.append(bounds[-1] + n_eps_in_block)
+
             target_env = b_name if env == "current" else env
-            bounds.append(bounds[-1] + len(res["data_low"]["decoder_entropy"][target_env]))
+            num_evals = len(res["data_low"]["decoder_evaluation"][target_env])
+            x_vals_block = [bounds[b_idx] + i * freq for i in range(num_evals)]
+            x_vals_all.extend(x_vals_block)
 
-        all_runs = {"low": [], "high": [], "low_acc": [], "high_acc": [], "low_conv": [], "high_conv": []}
-        for run_res in self.runs:
-            rd = {k: [] for k in all_runs.keys()}
-            for b_name, b_res in run_res:
-                target_env = b_name if env == "current" else env
-                rd["low"].extend(b_res["data_low"]["decoder_entropy"][target_env])
-                rd["high"].extend(b_res["data_high"]["decoder_entropy"][target_env])
-                rd["low_acc"].extend(b_res["data_low"]["decoder_acc"][target_env])
-                rd["high_acc"].extend(b_res["data_high"]["decoder_acc"][target_env])
-                if "decoder_converged" in b_res["data_low"]:
-                    rd["low_conv"].extend(b_res["data_low"]["decoder_converged"][target_env])
-                    rd["high_conv"].extend(b_res["data_high"]["decoder_converged"][target_env])
+        x_vals_all = np.array(x_vals_all)
 
-            for k in rd:
-                if rd[k]: all_runs[k].append(rd[k])
+        def extract_val(val_list, feat):
+            if feat == "average":
+                return np.mean(val_list)
+            else:
+                return val_list[int(feat) - 1]
 
-        x_range = np.arange(bounds[-1])
-        styles = {"low": ("#8B0000", "Low Var"), "high": ("#FF4500", "High Var")}
+        def extract_traj(traj, feat):
+            traj_arr = np.array(traj)
+            if traj_arr.ndim == 1:
+                return traj_arr
+            if feat == "average":
+                return np.mean(traj_arr, axis=1)
+            else:
+                return traj_arr[:, int(feat) - 1]
 
-        ld_m = np.mean(all_runs["low"], axis=0) if all_runs["low"] else None
-        hd_m = np.mean(all_runs["high"], axis=0) if all_runs["high"] else None
-        scale_factor = np.sum(ld_m) / np.sum(hd_m) if (
-                ld_m is not None and hd_m is not None and np.sum(hd_m) > 1e-6) else 1.0
+        metrics_data = {"low": {}, "high": {}}
+        for m_type in ["low", "high"]:
+            metrics_data[m_type] = {"nd_dec": [], "nc_dec": [], "nd_acc": [], "nc_acc": [], "loss": []}
+            for run in self.runs:
+                run_nd_dec, run_nc_dec, run_nd_acc, run_nc_acc, run_loss = [], [], [], [], []
+                for b_idx, (b_name, b_res) in enumerate(run):
+                    target_env = b_name if env == "current" else env
+                    evals = b_res[f"data_{m_type}"]["decoder_evaluation"][target_env]
 
-        handles_data = []
-        for k, (c, lbl) in styles.items():
-            if not all_runs[k]: continue
-            m_val = np.mean(all_runs[k], axis=0)
-            s_val = np.std(all_runs[k], axis=0) if (show_std and self.is_multi) else None
+                    run_nd_dec.extend([extract_val(e["near_data_decisiveness"], feature) for e in evals])
+                    run_nc_dec.extend([extract_val(e["near_center_decisiveness"], feature) for e in evals])
+                    run_nd_acc.extend([extract_val(e["near_data_accuracy"], feature) for e in evals])
+                    run_nc_acc.extend([extract_val(e["near_center_accuracy"], feature) for e in evals])
+                    run_loss.extend([extract_traj(e["loss_trajectory"], feature) for e in evals])
 
-            line, = ax1.plot(x_range, m_val, color=c, linestyle="-", linewidth=2.5, label=lbl)
-            handles_data.append(line)
-            if s_val is not None: ax1.fill_between(x_range, m_val - s_val, m_val + s_val, color=c, alpha=0.15)
+                metrics_data[m_type]["nd_dec"].append(run_nd_dec)
+                metrics_data[m_type]["nc_dec"].append(run_nc_dec)
+                metrics_data[m_type]["nd_acc"].append(run_nd_acc)
+                metrics_data[m_type]["nc_acc"].append(run_nc_acc)
+                metrics_data[m_type]["loss"].append(run_loss)
 
-            x_mid = x_range * scale_factor if "high" in k else x_range
-            ax_mid.plot(x_mid, m_val, color=c, linestyle="-", linewidth=2.5)
-            if s_val is not None: ax_mid.fill_between(x_mid, m_val - s_val, m_val + s_val, color=c, alpha=0.15)
+        plot_data = {"low": {}, "high": {}}
+        for m_type in ["low", "high"]:
+            for k in ["nd_dec", "nc_dec", "nd_acc", "nc_acc"]:
+                plot_data[m_type][k] = np.mean(metrics_data[m_type][k], axis=0)
+                if show_std and self.is_multi:
+                    plot_data[m_type][k + "_std"] = np.std(metrics_data[m_type][k], axis=0)
+            plot_data[m_type]["loss"] = np.mean(metrics_data[m_type]["loss"], axis=0)
 
-            tk = k + "_acc"
-            if all_runs[tk]:
-                m_acc = np.mean(all_runs[tk], axis=0)
-                ax2.plot(x_range, m_acc, color=c, linestyle="-", linewidth=2.5)
-                if show_std and self.is_multi: ax2.fill_between(x_range, m_acc - np.std(all_runs[tk], axis=0),
-                                                                m_acc + np.std(all_runs[tk], axis=0), color=c,
-                                                                alpha=0.15)
+        trapz_func = getattr(np, 'trapezoid', getattr(np, 'trapz', None))
+        area_low = trapz_func(1.0 - plot_data["low"]["nd_dec"], x_vals_all)
+        area_high = trapz_func(1.0 - plot_data["high"]["nd_dec"], x_vals_all)
+        scale_factor = area_low / area_high if area_high > 1e-6 else 1.0
+
+        styles = {
+            "low": {
+                "nd": {"color": "#00008B", "ls": "-", "lbl": "Low Var"},
+                "nc": {"color": "#8B0000", "ls": "--", "lbl": "Low Var"}
+            },
+            "high": {
+                "nd": {"color": "#4169E1", "ls": "-", "lbl": "High Var"},
+                "nc": {"color": "#FF4500", "ls": "--", "lbl": "High Var"}
+            }
+        }
+
+        def add_line(ax, x, y, std, sty):
+            line, = ax.plot(x, y, color=sty["color"], linestyle=sty["ls"], linewidth=2.5)
+            if std is not None:
+                ax.fill_between(x, y - std, y + std, color=sty["color"], alpha=0.15)
+            return line
+
+        for m_type in ["low", "high"]:
+            for loc in ["nd", "nc"]:
+                sty = styles[m_type][loc]
+                y_dec = plot_data[m_type][f"{loc}_dec"]
+                std_dec = plot_data[m_type].get(f"{loc}_dec_std", None)
+                y_acc = plot_data[m_type][f"{loc}_acc"]
+                std_acc = plot_data[m_type].get(f"{loc}_acc_std", None)
+
+                add_line(ax1, x_vals_all, y_dec, std_dec, sty)
+
+                x_scaled = x_vals_all * scale_factor if m_type == "high" else x_vals_all
+                add_line(ax_mid, x_scaled, y_dec, std_dec, sty)
+
+                add_line(ax2, x_vals_all, y_acc, std_acc, sty)
 
         for ax in [ax1, ax_mid, ax2]:
-            for i in range(1, len(bounds) - 1): ax.axvline(x=bounds[i], color='gray', linestyle='--', lw=1, alpha=0.7)
+            for i in range(1, len(bounds) - 1):
+                ax.axvline(x=bounds[i], color='gray', linestyle='--', lw=1.5, alpha=0.7)
             ax.grid(True, which="both", ls="-", alpha=0.4)
-            if ax != ax_mid: ax.set_xlim(x_range[0], x_range[-1])
+            if ax != ax_mid:
+                ax.set_xlim(x_vals_all[0], x_vals_all[-1])
 
-        ax1.set_ylim(-0.001, 1.05)
-        ax_mid.set_ylim(-0.001, 1.05)
-        ax_mid.set_xlim(x_range[0], x_range[-1])
-        ax2.set_ylim(0.5, 1.05)
+        ax1.set_ylim(-0.05, 1.05)
+        ax_mid.set_ylim(-0.05, 1.05)
+        ax2.set_ylim(-0.05, 1.05)
         ax_mid.set_xticks([])
-        for i, b in enumerate(blocks): ax2.text((bounds[i] + bounds[i + 1]) / 2, 0.55, b,
-                                                transform=ax2.get_xaxis_transform(), ha='center', va='bottom',
-                                                fontsize=10, fontweight='bold', color='darkslategray')
 
-        ax1.set_ylabel('Binary Entropy', fontsize=12)
-        ax_mid.set_ylabel('Binary Entropy', fontsize=12)
-        ax2.set_ylabel('Reconstruction Acc', fontsize=12)
-        ax2.set_xlabel('Epochs', fontsize=12)
+        for i, b in enumerate(blocks):
+            ax1.text((bounds[i] + bounds[i + 1]) / 2, -0.08, b, transform=ax1.get_xaxis_transform(),
+                     ha='center', va='top', fontsize=10, fontweight='bold', color='darkslategray')
+            ax2.text((bounds[i] + bounds[i + 1]) / 2, -0.15, b, transform=ax2.get_xaxis_transform(),
+                     ha='center', va='top', fontsize=10, fontweight='bold', color='darkslategray')
 
-        # Calculate convergence stats
-        conv_text = ""
-        if all_runs["low_conv"] and all_runs["high_conv"]:
-            low_conv_rate = np.mean(all_runs["low_conv"]) * 100
-            high_conv_rate = np.mean(all_runs["high_conv"]) * 100
-            conv_text = f"\nConv. Rate - Low: {low_conv_rate:.1f}% | High: {high_conv_rate:.1f}%"
+        ax1.set_ylabel('Decisiveness [0, 1]', fontsize=12, fontweight='bold')
+        ax_mid.set_ylabel('Decisiveness [0, 1]', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Accuracy [0, 1]', fontsize=12, fontweight='bold')
 
-        ax_mid.text(0.5, 0.95, f"High Var X-Axis SCALED by {scale_factor:.3f}{conv_text}", transform=ax_mid.transAxes,
-                    ha='center',
-                    va='top', fontsize=10, fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
+        ax2.set_xlabel('Classifier Epochs', fontsize=12, fontweight='bold', labelpad=20)
 
-        fig.suptitle("DR Tracker", fontweight='bold', fontsize=18, y=0.96)
-        ax1.set_title("Tracking input reconstruction uncertainty via binary entropy and accuracy.", fontsize=12,
-                      color='#444444', pad=10)
+        ax1.set_title("Decisiveness: mean(1 - categorical entropy)", fontsize=14, fontweight='bold', pad=10)
+        ax_mid.set_title(f"Decisiveness: High Var scaled by {scale_factor:.2f} for area alignment", fontsize=14,
+                         fontweight='bold', pad=10)
+        ax2.set_title("Accuracy: decision boundary alignment with bayesian model", fontsize=14, fontweight='bold',
+                      pad=10)
 
-        final_handles = []
-        if handles_data: final_handles.extend(
-            [Line2D([], [], color='none', label=r'$\bf{Decoder\ Performance:}$')] + handles_data)
+        norm = mpl.colors.Normalize(vmin=x_vals_all[0], vmax=x_vals_all[-1])
+        cmap = plt.cm.plasma
 
-        ax1.legend(handles=final_handles, loc='lower left', bbox_to_anchor=(1.02, 0.0), frameon=True, edgecolor='gray',
-                   fontsize=10)
+        for m_type, ax_loss in zip(["low", "high"], [ax4_low, ax4_high]):
+            loss_data = plot_data[m_type]["loss"]
+            n_evals, dec_epochs = loss_data.shape
+
+            dec_x_range = np.arange(dec_epochs)
+            for i, eval_x in enumerate(x_vals_all):
+                ax_loss.plot(dec_x_range, loss_data[i], color=cmap(norm(eval_x)), alpha=0.8, linewidth=1.5)
+
+            ax_loss.grid(True, linestyle='--', alpha=0.5)
+
+            title_str = "Low Variance" if m_type == "low" else "High Variance"
+            ax_loss.set_title(title_str, fontsize=12, fontweight='bold', pad=8)
+
+        ax4_low.set_ylabel("CrossEntropy Loss", fontsize=12, fontweight='bold')
+
+        ax4_low.text(1.025, 1.08, "Decoder Loss Trajectories", transform=ax4_low.transAxes, ha='center', fontsize=15,
+                     fontweight='bold')
+
+        ax4_low.text(1.025, -0.15, "Decoder Training Epochs", transform=ax4_low.transAxes, ha='center', fontsize=12,
+                     fontweight='bold')
+
+        cbar_ax = fig.add_axes([0.76, 0.08, 0.015, 0.14])
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, cax=cbar_ax)
+        cbar.set_label('Classifier Epoch', rotation=270, labelpad=15, fontweight='bold')
+
+        num_features = len(self.config.get("features_types", [1]))
+        if num_features > 1:
+            if feature == "average":
+                title_suffix = " - averaged across features"
+            else:
+                title_suffix = f" - for feature {feature}"
+        else:
+            title_suffix = ""
+
+        fig.suptitle(f"Dynamic Range (DR) Tracker{title_suffix}", fontweight='bold', fontsize=20, y=0.99)
+
+        if self.is_multi:
+            fig.text(0.5, 0.96, f"Averaged results over {len(self.runs)} seeds", ha='center', fontsize=14,
+                     color='#555555')
+
+        legend_elements = [
+            Line2D([0], [0], color='none', label=r'$\mathbf{Near\ Data}$'),
+            Line2D([0], [0], color=styles["low"]["nd"]["color"], linestyle='-', linewidth=2.5, label='Low Var'),
+            Line2D([0], [0], color=styles["high"]["nd"]["color"], linestyle='-', linewidth=2.5, label='High Var'),
+            Line2D([0], [0], color='none', label=''),
+            Line2D([0], [0], color='none', label=r'$\mathbf{Near\ Center}$'),
+            Line2D([0], [0], color=styles["low"]["nc"]["color"], linestyle='-', linewidth=2.5, label='Low Var'),
+            Line2D([0], [0], color=styles["high"]["nc"]["color"], linestyle='-', linewidth=2.5, label='High Var')
+        ]
 
         if show_config:
-            cfg_ax = fig.add_axes([0.76, 0.1, 0.22, 0.8])
+            cfg_ax = fig.add_axes([0.76, 0.74, 0.22, 0.18])
             cfg_ax.axis('off')
-            self._add_config_info(cfg_ax, show_config=show_config)
+            self._add_config_info(cfg_ax, show_config=show_config, is_dr_tracker=True)
+
+            fig.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(0.75, 0.72), frameon=True,
+                       edgecolor='gray', fontsize=11)
+        else:
+            fig.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(0.75, 0.6), frameon=True,
+                       edgecolor='gray', fontsize=11)
+
         self._save_fig(f"DR_Tracker_{env}_{self.exp_name.replace(' ', '_')}")
         plt.show()
