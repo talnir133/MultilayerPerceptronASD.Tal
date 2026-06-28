@@ -103,34 +103,35 @@ def get_metric_callback(tracker, test_envs, X_global, decoder_cfg, features_type
                     ((opt_probs > 0.5) == y_env.bool()).float().mean().item())
 
             # B4. Logistic Regression Probing (Decoder Readout)
-            if epoch_counter["count"] % decoder_cfg["freq"] == 0:
-                decoder = LogisticDecoder(
-                    input_size=env_acts.shape[1],
-                    features_types=features_types,
-                ).to(X_env.device)
+            if decoder_cfg:
+                if epoch_counter["count"] % decoder_cfg["freq"] == 0:
+                    decoder = LogisticDecoder(
+                        input_size=env_acts.shape[1],
+                        features_types=features_types,
+                    ).to(X_env.device)
 
-                decoder.fit(
-                    classification_model=current_model,
-                    X_clean=X_env,
-                    train_noise_sd=decoder_cfg["train_sd"],
-                    noise_mask=env_data["mask"],
-                    target_layer=target_layer,
-                    epochs=decoder_cfg["epochs"],
-                    lr=decoder_cfg["lr"]
-                )
+                    decoder.fit(
+                        classification_model=current_model,
+                        X_clean=X_env,
+                        train_noise_sd=decoder_cfg["train_sd"],
+                        noise_mask=env_data["mask"],
+                        target_layer=target_layer,
+                        epochs=decoder_cfg["epochs"],
+                        lr=decoder_cfg["lr"]
+                    )
 
-                eval_results = decoder.evaluate(
-                    classification_model=current_model,
-                    X_clean=X_env,
-                    noise_mask=env_data["mask"],
-                    target_layer=target_layer,
-                    samples_per_point=decoder_cfg["samples_per_point"],
-                    test_noise_sd=decoder_cfg["test_sd"]
-                )
+                    eval_results = decoder.evaluate(
+                        classification_model=current_model,
+                        X_clean=X_env,
+                        noise_mask=env_data["mask"],
+                        target_layer=target_layer,
+                        samples_per_point=decoder_cfg["samples_per_point"],
+                        test_noise_sd=decoder_cfg["test_sd"]
+                    )
 
-                tracker["decoder_evaluation"][env_name].append(eval_results)
+                    tracker["decoder_evaluation"][env_name].append(eval_results)
 
-        epoch_counter["count"] += 1
+            epoch_counter["count"] += 1
 
     return callback
 

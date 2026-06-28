@@ -62,8 +62,8 @@ class Simulation:
         data_high = create_tracker(test_envs, self.X_global)
 
         if self.track_metrics:
-            callback_low = get_metric_callback(data_low, test_envs, X_global_dev, cfg["decoder"], cfg["features_types"])
-            callback_high = get_metric_callback(data_high, test_envs, X_global_dev, cfg["decoder"], cfg["features_types"])
+            callback_low = get_metric_callback(data_low, test_envs, X_global_dev, cfg.get("decoder", False), cfg["features_types"])
+            callback_high = get_metric_callback(data_high, test_envs, X_global_dev, cfg.get("decoder", False), cfg["features_types"])
         else:
             callback_low, callback_high = None, None
 
@@ -121,13 +121,14 @@ class Simulation:
         block_config.setdefault("sd", 0.0)
 
             # Decoder Defaults
-        dec_cfg = block_config.setdefault("decoder", {})
-        dec_cfg.setdefault("train_sd", 0.0)
-        dec_cfg.setdefault("test_sd", 0.3)
-        dec_cfg.setdefault("samples_per_point", 20)
-        dec_cfg.setdefault("freq", 5)
-        dec_cfg.setdefault("epochs", 100)
-        dec_cfg.setdefault("lr", 0.1)
+        if "decoder" in self.global_config.keys():
+            dec_cfg = block_config.setdefault("decoder", {})
+            dec_cfg.setdefault("train_sd", 0)
+            dec_cfg.setdefault("test_sd", 0.2)
+            dec_cfg.setdefault("samples_per_point", 20)
+            dec_cfg.setdefault("freq", 5)
+            dec_cfg.setdefault("epochs", 100)
+            dec_cfg.setdefault("lr", 0.1)
 
         return block_config
 

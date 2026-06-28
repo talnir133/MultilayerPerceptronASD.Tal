@@ -813,7 +813,8 @@ class SimulationAnalyzer:
         display(HTML(anim.to_jshtml()))
 
     def plot_dr_tracker(self, env="current", feature="average", show_std=True, show_config=True):
-
+        if "decoder" not in self.config.keys():
+            raise ValueError("Decoder didn't run due to lack of Decoder configurations in the simulation's config")
         fig = plt.figure(figsize=(16, 18))
         gs = gridspec.GridSpec(7, 2, height_ratios=[2, 0.55, 1, 0.45, 1, 0.8, 1.5], hspace=0.0, wspace=0.05)
 
