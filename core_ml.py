@@ -10,16 +10,27 @@ from tqdm import tqdm
 # ==========================================
 
 class Dataset:
-    def __init__(self, features_types):
+    def __init__(self, features_types: list[int]) -> None:
+        """
+        Initializes the dataset generator with the specified dimensions for each feature.
+        """
         self.features_types = features_types
         self.exp_X = None
 
-    def create_exp_data(self):
+    def create_exp_data(self) -> None:
+        """
+        Generates the full dataset by creating all possible combinations
+        of one-hot encoded vectors based on the defined features_types.
+        """
         feature_options = [torch.eye(dim) for dim in self.features_types]
         all_combos = list(itertools.product(*feature_options))
         self.exp_X = torch.stack([torch.cat(combo) for combo in all_combos])
 
-    def get_block_data(self, zero_features):
+    def get_block_data(self, zero_features: list[int]) -> torch.Tensor:
+        """
+        Returns a dataset subset where specified features are zeroed out (ablated).
+        Removes duplicate rows that emerge from this ablation.
+        """
         X = self.exp_X.clone()
         offsets = np.cumsum([0] + self.features_types)
 
@@ -36,7 +47,11 @@ class Dataset:
 # ==========================================
 
 class Classifier(nn.Module):
-    def __init__(self, input_size, output_size, w_scale, b_scale, activation_type, hidden_size=None, n_hidden=1, **kwargs):
+    def __init__(self, input_size: int, output_size: int, w_scale: float, b_scale: float,
+                 activation_type: type[nn.Module], hidden_size: int = None, n_hidden: int = 1, **kwargs) -> None:
+        """
+        Initializes the MLP classifier architecture based on the given configuration.
+        """
         super(Classifier, self).__init__()
         self.w_scale = w_scale
         self.b_scale = b_scale
@@ -55,11 +70,17 @@ class Classifier(nn.Module):
 
             self._layers.add_module('fc_last', nn.Linear(hidden_size, output_size, bias=bool(b_scale)))
 
-    def forward(self, x):
-        """Standard forward pass through the network."""
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Standard forward pass through the network layers.
+        """
         return self._layers(x)
 
-    def reinitialize(self):
+    def reinitialize(self) -> None:
+        """
+        Reinitializes the weights and biases of the first hidden layer (fc1)
+        according to the variance scales specified in the configuration.
+        """
         for name, m in self.named_modules():
             if 'fc1' in name:
                 nn.init.xavier_normal_(m.weight, gain=self.w_scale)
@@ -67,8 +88,14 @@ class Classifier(nn.Module):
                     nn.init.normal_(m.bias, 0, self.b_scale)
 
 
-def train_classifier(model, optimizer, X_base, rule_func, epochs, batch_size, noise_sd, noise_mask, alpha_class=1.0,
-                alpha_rec=0.0, metric_callback=None):
+def train_classifier(model: nn.Module, optimizer: torch.optim.Optimizer, X_base: torch.Tensor,
+                     rule_func: callable, epochs: int, batch_size: int, noise_sd: float,
+                     noise_mask: torch.Tensor, alpha_class: float = 1.0, alpha_rec: float = 0.0,
+                     metric_callback: callable = None) -> tuple[nn.Module, torch.optim.Optimizer]:
+    """
+    Executes the training loop for the classification model over a specified number of epochs.
+    Injects dynamic Gaussian noise per epoch and optionally computes reconstruction loss.
+    """
     criterion = nn.BCEWithLogitsLoss()
 
     for epoch in tqdm(range(epochs), desc="Training Classifier"):
@@ -124,11 +151,6 @@ def train_classifier(model, optimizer, X_base, rule_func, epochs, batch_size, no
 # Logistic Regression Decoder
 # ==========================================
 
-
-import torch
-import torch.nn as nn
-
-
 class LogisticDecoder(nn.Module):
     """
     Multinomial Logistic Regression (Softmax Regression) Decoder.
@@ -136,7 +158,10 @@ class LogisticDecoder(nn.Module):
     Assumes feature independence, creating a separate model per feature.
     """
 
-    def __init__(self, input_size, features_types):
+    def __init__(self, input_size: int, features_types: list[int]) -> None:
+        """
+        Initializes the multinomial logistic regression probes for each feature independently.
+        """
         super().__init__()
         self.features_types = features_types
         self.num_features = len(features_types)
@@ -146,16 +171,17 @@ class LogisticDecoder(nn.Module):
             nn.Linear(input_size, dim) for dim in features_types
         ])
 
-    def forward(self, h):
+    def forward(self, h: torch.Tensor) -> list[torch.Tensor]:
         """
         Returns a list of raw logits for each feature separately.
         """
         return [probe(h) for probe in self.feature_probes]
 
-    def fit(self, classification_model, X_clean, train_noise_sd, noise_mask, target_layer="fc1", epochs=100, lr=0.1):
+    def fit(self, classification_model: nn.Module, X_clean: torch.Tensor, train_noise_sd: float,
+            noise_mask: torch.Tensor, target_layer: str = "fc1", epochs: int = 100, lr: float = 0.1) -> None:
         """
-        Trains the regression on N samples, generating dynamic noise per epoch.
-        Stores the loss trajectory in the class instance.
+        Trains the linear probes to predict the clean source features from noisy network activations.
+        The target labels are derived dynamically using an optimal Bayesian nearest-neighbor approach.
         """
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         criterion = nn.CrossEntropyLoss()
@@ -202,11 +228,10 @@ class LogisticDecoder(nn.Module):
                 tracking_loss = [criterion(logits_per_feature[k], bayes_labels[k]).item() for k in range(self.num_features)]
                 self.loss_trajectory.append(tracking_loss)
 
-    def measure_decisiveness(self, classification_activations):
+    def measure_decisiveness(self, classification_activations: torch.Tensor) -> list[float]:
         """
-        Measures decisiveness. Normalized to [0, 1].
-        1.0 = perfect decisiveness (One-Hot).
-        0.0 = completely confused (Uniform distribution).
+        Evaluates the dynamic range (decisiveness) of the activations per feature.
+        Returns a list of scores normalized to [0, 1], where 1.0 represents a perfectly confident (one-hot) prediction.
         """
         self.eval()
         decisiveness_scores = []
@@ -228,10 +253,11 @@ class LogisticDecoder(nn.Module):
 
         return decisiveness_scores
 
-    def measure_decision_boundary_accuracy(self, classification_activations, X_noisy, X_clean):
+    def measure_decision_boundary_accuracy(self, classification_activations: torch.Tensor,
+                                           X_noisy: torch.Tensor, X_clean: torch.Tensor) -> list[float]:
         """
-        Measures accuracy by comparing the hard assignment (argmax)
-        of the model to the optimal Bayes classifier (closest clean point).
+        Measures the alignment between the decoder's decision boundary and the optimal Bayesian classifier.
+        Returns the accuracy percentage per feature.
         """
         self.eval()
         accuracies = []
@@ -259,9 +285,11 @@ class LogisticDecoder(nn.Module):
 
         return accuracies
 
-    def evaluate(self,  classification_model, X_clean, noise_mask, test_noise_sd=0.3, target_layer="fc1", samples_per_point=20):
+    def evaluate(self, classification_model: nn.Module, X_clean: torch.Tensor, noise_mask: torch.Tensor,
+                 test_noise_sd: float = 0.3, target_layer: str = "fc1", samples_per_point: int = 20) -> dict:
         """
-        Consolidates the full evaluation: near data, near center, and loss trajectory.
+        Consolidates the full probing evaluation: measures decisiveness and accuracy
+        both near the original data points (interpolation) and near the center (extrapolation).
         """
         results = {}
         M = samples_per_point

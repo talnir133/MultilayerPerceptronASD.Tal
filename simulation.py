@@ -13,7 +13,10 @@ from classification_rules import RULES_REGISTRY
 from metrics import create_tracker, get_metric_callback, get_noise_mask
 
 class Simulation:
-    def __init__(self, config):
+    def __init__(self, config: dict) -> None:
+        """
+        Initializes the simulation environment, dataset, and random seeds from the configuration.
+        """
         self.track_metrics = None
         self.global_config = deepcopy(config)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -24,7 +27,11 @@ class Simulation:
         torch.manual_seed(self.global_config["seed"])
         np.random.seed(self.global_config["seed"])
 
-    def run(self, track_metrics=True):
+    def run(self, track_metrics: bool = True) -> list:
+        """
+        Iterates through the experiment blocks sequentially, maintaining and training
+        two separate models (Low Variance / High Variance) while collecting metrics.
+        """
         self.track_metrics = track_metrics
         simulation_results = []
 
@@ -48,7 +55,11 @@ class Simulation:
 
         return simulation_results
 
-    def run_block(self, models, optimizers, cfg, test_envs):
+    def run_block(self, models: dict, optimizers: dict, cfg: dict, test_envs: dict) -> dict:
+        """
+        Executes a single continuous learning block.
+        Applies block-specific rules, generates ablated data, and trains both models.
+        """
         print(f"\n--- Running Block: {cfg['block_name']} ---")
 
         rule_to_apply = partial(RULES_REGISTRY[cfg["rule"]], **cfg)
@@ -99,7 +110,11 @@ class Simulation:
             "model_high": model_high, "optimizer_high": optimizer_high, "data_high": data_high
         }
 
-    def get_block_configs(self, block):
+    def get_block_configs(self, block: dict) -> dict:
+        """
+        Merges global configurations with block-specific settings and resolves
+        object mappings (e.g., optimizers, activation functions).
+        """
         # Base config merging
         block_config = deepcopy(self.global_config)
         block_config.update(block)
@@ -132,7 +147,10 @@ class Simulation:
 
         return block_config
 
-    def _init_model_and_optimizer(self, cfg, variance_type):
+    def _init_model_and_optimizer(self, cfg: dict, variance_type: str) -> tuple[nn.Module, torch.optim.Optimizer]:
+        """
+        Instantiates and initializes a classifier model and its corresponding optimizer.
+        """
         model = Classifier(
             input_size=cfg["input_size"],
             output_size=cfg["output_size"],
@@ -148,7 +166,10 @@ class Simulation:
 
         return model, optimizer
 
-    def _initialize_test_envs(self):
+    def _initialize_test_envs(self) -> dict:
+        """
+        Prepares testing environments with clean and noisy data for all unique experiment blocks.
+        """
         test_envs = {}
         for block in self.global_config["exp_blocks"]:
             b_name = block["block_name"]
@@ -179,6 +200,9 @@ class Simulation:
 
 @contextlib.contextmanager
 def suppress_output():
+    """
+    Context manager to suppress standard output and error messages during multi-simulations.
+    """
     with open(os.devnull, 'w') as devnull:
         old_stdout, old_stderr = sys.stdout, sys.stderr
         sys.stdout, sys.stderr = devnull, devnull
@@ -188,7 +212,11 @@ def suppress_output():
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
 
-def averaged_simulation(config, n):
+def averaged_simulation(config: dict, n: int) -> list:
+    """
+    Runs the full simulation 'n' times with different seeds for statistical robustness.
+    Suppresses console output during runs.
+    """
     simulations = []
     for i in tqdm(range(n), desc="Simulations Progress"):
         cfg = deepcopy(config)

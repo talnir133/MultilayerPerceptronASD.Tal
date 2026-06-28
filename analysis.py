@@ -14,7 +14,10 @@ import matplotlib as mpl
 warnings.filterwarnings("ignore")
 
 
-def get_distinct_colors(n):
+def get_distinct_colors(n: int) -> list[tuple[float, float, float]]:
+    """
+    Generates a list of visually distinct RGB colors based on the HLS color space.
+    """
     colors = []
     for i in range(n):
         hue = i / n
@@ -25,7 +28,11 @@ def get_distinct_colors(n):
     return colors
 
 
-def align_coords(coords, ref_coords):
+def align_coords(coords: np.ndarray, ref_coords: np.ndarray) -> np.ndarray:
+    """
+    Aligns a set of 2D coordinates to a reference set using Procrustes analysis (SVD).
+    Ensures geometric consistency across animation frames.
+    """
     if coords.shape[0] == 0: return coords
     mean_c = coords.mean(axis=0)
     mean_ref = ref_coords.mean(axis=0)
@@ -41,7 +48,10 @@ def align_coords(coords, ref_coords):
 
 
 class SimulationAnalyzer:
-    def __init__(self, results, config, save_figures=True):
+    def __init__(self, results: list, config: dict, save_figures: bool = True) -> None:
+        """
+        Initializes the analyzer, stores the simulation results, and prepares the output directory.
+        """
         if isinstance(results[0][0], str):
             self.runs = [results]
             self.is_multi = False
@@ -60,7 +70,11 @@ class SimulationAnalyzer:
             with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
 
-    def _save_fig(self, base_name):
+    def _save_fig(self, base_name: str) -> None:
+        """
+        Saves the current matplotlib figure to the results directory,
+        automatically appending a counter to avoid overwriting existing files.
+        """
         if not self.save_figures:
             return
         file_path = os.path.join(self.save_dir, f"{base_name}.png")
@@ -70,7 +84,10 @@ class SimulationAnalyzer:
             counter += 1
         plt.savefig(file_path, bbox_inches='tight', dpi=300)
 
-    def _add_config_info(self, ax, show_config=True, is_dr_tracker=False):
+    def _add_config_info(self, ax: plt.Axes, show_config: bool = True, is_dr_tracker: bool = False) -> None:
+        """
+        Renders a text box containing the experiment configuration details onto the provided axes.
+        """
         if not show_config:
             return
 
@@ -118,7 +135,12 @@ class SimulationAnalyzer:
         ax.text(0.0, 1.0, txt.strip(), transform=ax.transAxes, fontsize=8, va='top', ha='left',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#f9f9f9', alpha=0.8, edgecolor='gray'))
 
-    def plot_metric_over_epochs(self, metric_name, envs="current_only", show_std=False, show_config=True):
+    def plot_metric_over_epochs(self, metric_name: str, envs: str | list = "current_only",
+                                show_std: bool = False, show_config: bool = True) -> None:
+        """
+        Plots a given metric (e.g., Loss, Accuracy, PR) across all training epochs and blocks.
+        Supports filtering by specific test environments and displaying standard deviation across seeds.
+        """
         is_global_metric = isinstance(self.runs[0][0][1]["data_low"].get(metric_name), list)
 
         if is_global_metric:
@@ -339,8 +361,13 @@ class SimulationAnalyzer:
         self._save_fig(f"{metric_name}_{envs}_figure_{self.exp_name.replace(' ', '_')}")
         plt.show()
 
-    def plot_parameter_distributions(self, layer_name="fc1", param_type="weight", color_mode=None, bins=50,
-                                     clip_percentile=2, show_config=True):
+    def plot_parameter_distributions(self, layer_name: str = "fc1", param_type: str = "weight",
+                                     color_mode: str = None, bins: int = 50, clip_percentile: int = 2,
+                                     show_config: bool = True) -> None:
+        """
+        Generates an animated histogram showing the distribution of weights or biases over time.
+        Colors can map to spatial norms, biases, or specific input features.
+        """
         mpl.rcParams['animation.embed_limit'] = 100.0
 
         param_type = param_type.lower()
@@ -579,7 +606,11 @@ class SimulationAnalyzer:
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
 
-    def plot_PCs(self, epochs=(-1,), layer_name='fc1', show_config=True):
+    def plot_PCs(self, epochs: tuple = (-1,), layer_name: str = 'fc1', show_config: bool = True) -> None:
+        """
+        Visualizes the Principal Component Analysis (PCA) projection of network activations.
+        Generates an animation tracing the geometric evolution of the representations.
+        """
         if isinstance(epochs, int): epochs = (epochs,)
 
         env_X = self.runs[0][0][1]["data_low"]["X_global"]
@@ -812,7 +843,12 @@ class SimulationAnalyzer:
         plt.close(fig)
         display(HTML(anim.to_jshtml()))
 
-    def plot_dr_tracker(self, env="current", feature="average", show_std=True, show_config=True):
+    def plot_dr_tracker(self, env: str = "current", feature: str = "average",
+                        show_std: bool = True, show_config: bool = True) -> None:
+        """
+        Renders the comprehensive Dynamic Range (DR) tracker dashboard.
+        Displays decisiveness, scaled area alignment, decision boundary accuracy, and decoder loss trajectories.
+        """
         if "decoder" not in self.config.keys():
             raise ValueError("Decoder didn't run due to lack of Decoder configurations in the simulation's config")
         fig = plt.figure(figsize=(16, 18))

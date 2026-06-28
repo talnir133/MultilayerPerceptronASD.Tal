@@ -1,6 +1,5 @@
 from simulation import Simulation, averaged_simulation
 from analysis import SimulationAnalyzer
-from dynamic_ranges import Simple_DR_Simulation
 
 CONFIG = {
     "exp_name": "Simulation_1",
@@ -10,7 +9,7 @@ CONFIG = {
     "w_scale_low": 0.1, "w_scale_high": 0.1,
     "optimizer_type": "Adam", "activation_type": "Tanh",
     "batch_size": 1, "seed": 0, "lr": 0.04,
-    "decoder": {"train_sd": 0.1, "test_sd": 0.3, "samples_per_point": 20, "freq": 2, "epochs": 200, "lr": 0.1},
+    "decoder": {"train_sd": 0, "test_sd": 0.3, "samples_per_point": 20, "freq": 2, "epochs": 200, "lr": 0.1},
     "exp_blocks": [
             {"block_name": "B1", "rule": "upper_half", "zero_features": (), "epochs": 10, "sd": 0, "alpha_class": 1.0, "alpha_rec": 0.0, "deciding_feature": 0}]
 }

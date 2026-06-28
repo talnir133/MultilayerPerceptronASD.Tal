@@ -2,13 +2,18 @@ import numpy as np
 import torch
 from sklearn.metrics.pairwise import pairwise_distances
 from core_ml import LogisticDecoder
+import torch.nn as nn
 
 
 # ==========================================
 # Tracking & Metrics Collection
 # ==========================================
 
-def create_tracker(test_envs, X_global):
+def create_tracker(test_envs: dict, X_global: torch.Tensor) -> dict:
+    """
+    Initializes a structured dictionary to track weights, activations,
+    and performance metrics across all evaluation environments.
+    """
     tracker = {
         "weights": {}, "biases": {},
         "X_global": X_global.cpu().numpy(),
@@ -30,7 +35,12 @@ def create_tracker(test_envs, X_global):
     return tracker
 
 
-def get_metric_callback(tracker, test_envs, X_global, decoder_cfg, features_types, target_layer="fc1"):
+def get_metric_callback(tracker: dict, test_envs: dict, X_global: torch.Tensor,
+                        decoder_cfg: dict, features_types: list[int], target_layer: str = "fc1") -> callable:
+    """
+    Returns a callback function that is executed every epoch during training.
+    Collects parameters, calculates PR, logs losses, and conditionally trains the Decoder.
+    """
     epoch_counter = {"count": 0}
 
     def callback(current_model, loss_criterion):
@@ -141,7 +151,12 @@ def get_metric_callback(tracker, test_envs, X_global, decoder_cfg, features_type
 # ==========================================
 
 
-def get_bayes_optimal_probabilities(noisy_X, noise_sd, clean_X, clean_y):
+def get_bayes_optimal_probabilities(noisy_X: torch.Tensor, noise_sd: float,
+                                    clean_X: torch.Tensor, clean_y: torch.Tensor) -> torch.Tensor:
+    """
+    Computes the analytically optimal classification probabilities for noisy inputs
+    based on their distances to the clean source points.
+    """
     if noise_sd <= 1e-7:
         return clean_y[torch.cdist(noisy_X, clean_X).argmin(dim=1)]
 
@@ -150,7 +165,11 @@ def get_bayes_optimal_probabilities(noisy_X, noise_sd, clean_X, clean_y):
     return (likelihoods @ clean_y) / likelihoods.sum(dim=1, keepdim=True)
 
 
-def get_network_activations(model, x):
+def get_network_activations(model: nn.Module, x: torch.Tensor) -> dict[str, np.ndarray]:
+    """
+    Passes input through the model and extracts the hidden activations of all layers.
+    Returns a dictionary mapping layer names to their corresponding activation arrays.
+    """
     activations = {}
     out = x
     for name, layer in model._layers.named_children():
@@ -159,7 +178,10 @@ def get_network_activations(model, x):
     return activations
 
 
-def get_noise_mask(block_config, X):
+def get_noise_mask(block_config: dict, X: torch.Tensor) -> torch.Tensor:
+    """
+    Creates a binary mask to zero-out noise for specified ablated (zeroed) features.
+    """
     noise_mask = torch.ones_like(X)
     start_idx = 0
     for i, dim in enumerate(block_config.get("features_types", [])):
